@@ -3,6 +3,7 @@ using Brutal.ImPlotApi;
 using Brutal.Numerics;
 using Crossfire.Render;
 using Crossfire.Sim;
+using Crossfire.Sim.Bots;
 using Crossfire.Sim.Patterns;
 using Crossfire.Sim.Players;
 using Crossfire.Sim.Rules;
@@ -51,9 +52,11 @@ internal sealed class DebugUi(string deviceName, bool validation)
         _maxFrameAlloc = Math.Max(_maxFrameAlloc, bytes);
     }
 
-    public void Draw(SimState s, Simulation sim, ref PlayerSetup[] setup, uint seed, out bool restart, double frameDt, double simMs, int sprites, int dropped)
+    public void Draw(SimState s, Simulation sim, ref PlayerSetup[] setup, uint seed, out bool restart, double frameDt, double simMs, int sprites, int dropped,
+        SlotController[] controllers, out bool controllersChanged)
     {
         restart = false;
+        controllersChanged = false;
         _frameMs[_historyIndex] = (float)(frameDt * 1000);
         _simMs[_historyIndex] = (float)Math.Max(0, simMs);
         _historyIndex = (_historyIndex + 1) % History;
@@ -109,6 +112,26 @@ internal sealed class DebugUi(string deviceName, bool validation)
             {
                 setup = [new(0, PlayerRole.Dodger), new(1, PlayerRole.Gunner), new(1, PlayerRole.Dodger), new(0, PlayerRole.Gunner)];
                 restart = true;
+            }
+
+            // Per-slot controller: click to cycle Keyboard L -> Keyboard R -> Bot Easy/Normal/Hard.
+            for (int i = 0; i < controllers.Length; i++)
+            {
+                ImGui.PushID(100 + i);
+                if (ImGui.Button($"P{i + 1}: {controllers[i].Label}", default))
+                {
+                    var c = controllers[i];
+                    if (!c.IsBot)
+                    {
+                        if (c.Kind == ControllerKind.KeyboardRight) c.SetBot(BotDifficulty.Easy);
+                        else c.SetKind(c.Kind == ControllerKind.KeyboardLeft ? ControllerKind.KeyboardRight : ControllerKind.KeyboardLeft);
+                    }
+                    else if (c.Difficulty == BotDifficulty.Hard) c.SetKind(ControllerKind.KeyboardLeft);
+                    else c.SetBot(c.Difficulty + 1);
+                    controllersChanged = true;
+                }
+                ImGui.PopID();
+                if (i % 2 == 0 && i + 1 < controllers.Length) ImGui.SameLine(0, -1);
             }
 
             if (ImGui.Button("spawn 20k bullets", default)) SpawnStressBullets(s, 20_000);

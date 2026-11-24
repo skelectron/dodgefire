@@ -68,4 +68,16 @@ public sealed class KeyboardInput(GlfwWindow window)
         if (Down(scheme.Start)) buttons |= InputButtons.Start;
         return new SimInput((sbyte)(x * SimInput.AxisMax), (sbyte)(y * SimInput.AxisMax), buttons);
     }
+
+    /// <summary>One player using either scheme (e.g. solo vs a bot): axes add up, buttons combine.</summary>
+    public SimInput ReadAny(KeyboardScheme a, KeyboardScheme b)
+    {
+        var ia = Read(a);
+        var ib = Read(b);
+        int x = Math.Clamp(ia.MoveX + ib.MoveX, -SimInput.AxisMax, SimInput.AxisMax);
+        int y = Math.Clamp(ia.MoveY + ib.MoveY, -SimInput.AxisMax, SimInput.AxisMax);
+        return new SimInput((sbyte)x, (sbyte)y, ia.Buttons | ib.Buttons);
+    }
+
+    public bool IsDown(GlfwKey key) => window.GetKey(key) != GlfwKeyAction.Release;
 }

@@ -28,7 +28,16 @@ public sealed class GameRenderer
     public const float HudBottom = 30f;
 
     /// <summary>Per player slot: control hints shown in the HUD, e.g. ["WASD", "L-Shift", "Q E R F", "Space"].</summary>
-    public string[][] ControlHints { get; set; } = [];
+    public string[]?[] ControlHints
+    {
+        get => _controlHints;
+        set
+        {
+            _controlHints = value;
+            Array.Clear(_hintCache);
+        }
+    }
+    private string[]?[] _controlHints = [];
 
     /// <summary>Per player slot: optional tag shown in the HUD, e.g. "BOT · HARD". Null for humans.</summary>
     public string?[] PlayerTags { get; set; } = new string?[SimState.MaxPlayers];
@@ -351,11 +360,12 @@ public sealed class GameRenderer
         for (int i = 0; i < s.PlayerCount && i < ControlHints.Length; i++)
         {
             ref readonly var p = ref s.Players[i];
+            if (ControlHints[i] == null) continue; // bots have no controls to show
             string text = HintText(i, p.Role);
             bool left = p.Team == 0;
             Text(dl, text, left ? 14 : windowW - 14, by, 14, TeamColor[p.Team].Scale(0.85f), center: false, rightAlign: !left);
         }
-        Text(dl, "F1 debug · Esc quit", cx, by, 13, new Color4(0.45f, 0.47f, 0.52f), center: true);
+        Text(dl, "F1 debug · Esc menu", cx, by, 13, new Color4(0.45f, 0.47f, 0.52f), center: true);
 
         // Player labels above Dodgers (tells teammates apart in 2v2+).
         for (int i = 0; i < s.PlayerCount; i++)
@@ -473,7 +483,7 @@ public sealed class GameRenderer
     {
         ref string? cached = ref _hintCache[player, (int)role];
         if (cached != null) return cached;
-        var h = ControlHints[player];
+        var h = ControlHints[player]!;
         cached = role == PlayerRole.Dodger
             ? $"P{player + 1} Dodger: {h[0]} move · {h[1]} focus"
             : $"P{player + 1} Gunner: {h[0]} aim · {h[2]} patterns";
@@ -512,6 +522,9 @@ public sealed class GameRenderer
     }
 
     private ImFontPtr HudFont => Art?.Font ?? ImGui.GetFont();
+
+    /// <summary>Draws text with the HUD font (used by the title menu).</summary>
+    public void Label(ImDrawListPtr dl, ImString text, float x, float y, float size, Color4 c, bool center = false) => Text(dl, text, x, y, size, c, center);
 
     private void Text(ImDrawListPtr dl, ImString text, float x, float y, float size, Color4 c, bool center = false, bool rightAlign = false)
     {
