@@ -38,7 +38,7 @@ public class DeterminismTests
     [Fact]
     public void Golden_hash_is_stable()
     {
-        const ulong Golden = 0xE634027D684D3784;
+        const ulong Golden = 0x9B7FE6001E87E467;
         ulong actual = RunMatch(TwoVsTwo, 1234, 5678);
         Assert.True(Golden == actual, $"Golden hash mismatch: expected 0x{Golden:X16}, actual 0x{actual:X16}");
     }

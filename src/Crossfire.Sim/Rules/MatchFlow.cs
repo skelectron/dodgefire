@@ -62,7 +62,10 @@ public static class MatchFlow
                 {
                     p.Lives = 0;
                     p.Energy = r.EnergyStart;
-                    p.Cursor = new FixVec2((enemyMin + enemyMax) / 2, h * (gi + 1) / (gunners + 1));
+                    // Start near the midline (well away from the enemy Dodgers spawning mid-half).
+                    Fix inset = Fix.FromInt(70);
+                    Fix cx = team == 0 ? enemyMin + inset : enemyMax - inset;
+                    p.Cursor = new FixVec2(cx, h * (gi + 1) / (gunners + 1));
                     gi++;
                 }
                 p.PrevPos = p.Pos;
