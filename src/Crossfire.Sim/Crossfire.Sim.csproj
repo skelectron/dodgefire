@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Pure deterministic simulation: no rendering, no windowing, no floats, no wall-clock time. -->
+  <ItemGroup>
+    <PackageReference Include="Ahwoo.BRUTAL.Memory" />
+    <PackageReference Include="Ahwoo.BRUTAL.Concurrency" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Crossfire.Sim.Tests" />
+    <InternalsVisibleTo Include="Crossfire.Benchmarks" />
+  </ItemGroup>
+</Project>

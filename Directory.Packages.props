@@ -1,0 +1,18 @@
+<Project>
+  <ItemGroup>
+    <PackageVersion Include="Ahwoo.BRUTAL.Core" Version="2026.10.4" />
+    <PackageVersion Include="Ahwoo.BRUTAL.Memory" Version="2026.10.2" />
+    <PackageVersion Include="Ahwoo.BRUTAL.Concurrency" Version="2026.10.2" />
+    <PackageVersion Include="Ahwoo.BRUTAL.Glfw" Version="2026.10.5" />
+    <PackageVersion Include="Ahwoo.BRUTAL.Vulkan" Version="2026.10.3" />
+    <PackageVersion Include="Ahwoo.BRUTAL.ShaderC" Version="2026.10.3" />
+    <PackageVersion Include="Ahwoo.BRUTAL.ImGui" Version="2026.10.3" />
+    <PackageVersion Include="Ahwoo.BRUTAL.ImGui.Backends" Version="2026.10.3" />
+    <PackageVersion Include="Ahwoo.BRUTAL.ImPlot" Version="2026.10.3" />
+    <PackageVersion Include="BenchmarkDotNet" Version="0.15.2" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+  </ItemGroup>
+</Project>

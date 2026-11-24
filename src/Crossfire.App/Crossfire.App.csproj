@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Crossfire.Sim\Crossfire.Sim.csproj" />
+    <ProjectReference Include="..\Crossfire.Input\Crossfire.Input.csproj" />
+    <ProjectReference Include="..\Crossfire.Render\Crossfire.Render.csproj" />
+    <ProjectReference Include="..\Crossfire.Audio\Crossfire.Audio.csproj" />
+  </ItemGroup>
+</Project>

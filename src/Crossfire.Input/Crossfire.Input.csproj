@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Crossfire.Sim\Crossfire.Sim.csproj" />
+    <PackageReference Include="Ahwoo.BRUTAL.Glfw" />
+  </ItemGroup>
+</Project>
