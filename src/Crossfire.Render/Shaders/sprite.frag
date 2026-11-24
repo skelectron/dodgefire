@@ -5,6 +5,9 @@ layout(location = 0) in vec2 vLocal;          // -1..1 across the quad
 layout(location = 1) in vec4 vColor;
 layout(location = 2) flat in vec4 vParams;    // y = shape, z/w = params
 layout(location = 3) flat in vec2 vSizePx;    // half extents in pixels
+layout(location = 4) in vec2 vUV;
+
+layout(set = 0, binding = 0) uniform sampler2D uAtlas;
 
 layout(location = 0) out vec4 outColor;
 
@@ -16,6 +19,7 @@ const int SHAPE_ARC     = 4; // z = progress 0..1 (clockwise from top), w = thic
 const int SHAPE_DIAMOND = 5; // z = outline thickness
 const int SHAPE_CROSS   = 6; // z = bar thickness, w = centre gap
 const int SHAPE_DISC    = 7; // filled circle
+const int SHAPE_TEXTURED = 8; // atlas sprite * tint
 
 // Antialiased coverage of "inside" for signed distance d (in -1..1 local units).
 float cover(float d)
@@ -32,6 +36,11 @@ void main()
     vec4 c = vColor;
     float a = 0.0;
 
+    if (shape == SHAPE_TEXTURED)
+    {
+        outColor = texture(uAtlas, vUV) * c;
+        return;
+    }
     if (shape == SHAPE_BULLET)
     {
         a = cover(r - 1.0);

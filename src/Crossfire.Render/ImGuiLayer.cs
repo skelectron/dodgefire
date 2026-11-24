@@ -39,6 +39,23 @@ public sealed class ImGuiLayer : IDisposable
 
     public bool WantsKeyboard => ImGui.GetIO().WantCaptureKeyboard;
 
+    /// <summary>Adds a TTF font (the default font stays the default). Returns a null font pointer on failure.</summary>
+    public ImFontPtr LoadFont(string path, float sizePixels)
+    {
+        if (!File.Exists(path))
+        {
+            Console.WriteLine($"[imgui] font not found: {path}");
+            return default;
+        }
+        var io = ImGui.GetIO();
+        if (io.Fonts.Fonts.Count == 0) ImFontAtlasExtensions.AddFontDefault(io.Fonts, default);
+        return ImFontAtlasExtensions.AddFontFromFileTTF(io.Fonts, path, sizePixels, default, ReadOnlySpan<uint>.Empty);
+    }
+
+    /// <summary>Registers a Vulkan image with ImGui so draw lists can use it (AddImage).</summary>
+    public ImTextureRef AddTexture(VkSampler sampler, VkImageView view) =>
+        _renderer.AddTexture(sampler, view, VkImageLayout.ShaderReadOnlyOptimal);
+
     public void NewFrame()
     {
         _renderer.NewFrame();

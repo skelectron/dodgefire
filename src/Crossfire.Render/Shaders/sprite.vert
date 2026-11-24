@@ -5,6 +5,7 @@ layout(location = 0) in vec2 iPos;     // centre, arena units
 layout(location = 1) in vec2 iSize;    // half extents, arena units
 layout(location = 2) in vec4 iColor;   // straight (non-premultiplied) RGBA
 layout(location = 3) in vec4 iParams;  // x = rotation (rad), y = shape id, z/w = shape params
+layout(location = 4) in vec4 iUV;      // atlas rect (u0, v0, u1, v1) for textured sprites
 
 layout(push_constant) uniform Push
 {
@@ -17,6 +18,7 @@ layout(location = 0) out vec2 vLocal;
 layout(location = 1) out vec4 vColor;
 layout(location = 2) flat out vec4 vParams;
 layout(location = 3) flat out vec2 vSizePx;
+layout(location = 4) out vec2 vUV;
 
 const vec2 kCorners[6] = vec2[](
     vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(1.0, 1.0),
@@ -33,4 +35,5 @@ void main()
     vColor = iColor;
     vParams = iParams;
     vSizePx = iSize * pc.pixelsPerUnit;
+    vUV = mix(iUV.xy, iUV.zw, c * 0.5 + 0.5);
 }

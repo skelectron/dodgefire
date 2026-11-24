@@ -16,9 +16,11 @@ public enum SpriteShape
     Diamond = 5,
     Cross = 6,
     Disc = 7,
+    /// <summary>Atlas texture region (UV), multiplied by the tint colour.</summary>
+    Textured = 8,
 }
 
-/// <summary>Per-instance data uploaded to the GPU (48 bytes, matches sprite.vert inputs).</summary>
+/// <summary>Per-instance data uploaded to the GPU (64 bytes, matches sprite.vert inputs).</summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct SpriteInstance
 {
@@ -26,6 +28,7 @@ public struct SpriteInstance
     public float HalfW, HalfH;
     public float R, G, B, A;
     public float Rotation, Shape, P0, P1;
+    public float U0, V0, U1, V1;
 }
 
 /// <summary>Straight-alpha colour helper.</summary>
@@ -50,6 +53,7 @@ public sealed unsafe class SpriteBatch : IDisposable
     }
 
     private readonly VulkanContext _vk;
+    private readonly TextureAtlas _atlas;
     private readonly VkPipelineLayout _layout;
     private VkPipeline _pipeline;
     private readonly VkShaderModule _vert, _frag;
@@ -66,9 +70,10 @@ public sealed unsafe class SpriteBatch : IDisposable
     /// <summary>Instances dropped this frame because the buffer was full.</summary>
     public int Dropped { get; private set; }
 
-    public SpriteBatch(VulkanContext vk, int capacity = 131_072)
+    public SpriteBatch(VulkanContext vk, TextureAtlas atlas, int capacity = 131_072)
     {
         _vk = vk;
+        _atlas = atlas;
         Capacity = capacity;
         for (int i = 0; i < VulkanContext.FramesInFlight; i++)
         {
@@ -87,7 +92,8 @@ public sealed unsafe class SpriteBatch : IDisposable
             Offset = new Brutal.ByteSize32(0),
             Size = new Brutal.ByteSize32((uint)sizeof(PushConstants)),
         };
-        _layout = DeviceExtensions.CreatePipelineLayout(vk.Device, ReadOnlySpan<VkDescriptorSetLayout>.Empty, new ReadOnlySpan<VkPushConstantRange>(&push, 1), null);
+        var setLayout = atlas.SetLayout;
+        _layout = DeviceExtensions.CreatePipelineLayout(vk.Device, new ReadOnlySpan<VkDescriptorSetLayout>(&setLayout, 1), new ReadOnlySpan<VkPushConstantRange>(&push, 1), null);
         CreatePipeline();
     }
 
@@ -107,16 +113,17 @@ public sealed unsafe class SpriteBatch : IDisposable
             Stride = new Brutal.ByteSize32((uint)sizeof(SpriteInstance)),
             InputRate = VkVertexInputRate.Instance,
         };
-        var attrs = stackalloc VkVertexInputAttributeDescription[4];
+        var attrs = stackalloc VkVertexInputAttributeDescription[5];
         attrs[0] = new VkVertexInputAttributeDescription { Location = 0, Binding = 0, Format = VkFormat.R32G32SFloat, Offset = new Brutal.ByteSize32(0) };
         attrs[1] = new VkVertexInputAttributeDescription { Location = 1, Binding = 0, Format = VkFormat.R32G32SFloat, Offset = new Brutal.ByteSize32(8) };
         attrs[2] = new VkVertexInputAttributeDescription { Location = 2, Binding = 0, Format = VkFormat.R32G32B32A32SFloat, Offset = new Brutal.ByteSize32(16) };
         attrs[3] = new VkVertexInputAttributeDescription { Location = 3, Binding = 0, Format = VkFormat.R32G32B32A32SFloat, Offset = new Brutal.ByteSize32(32) };
+        attrs[4] = new VkVertexInputAttributeDescription { Location = 4, Binding = 0, Format = VkFormat.R32G32B32A32SFloat, Offset = new Brutal.ByteSize32(48) };
         var vertexInput = new VkPipelineVertexInputStateCreateInfo
         {
             VertexBindingDescriptionCount = 1,
             VertexBindingDescriptions = &binding,
-            VertexAttributeDescriptionCount = 4,
+            VertexAttributeDescriptionCount = 5,
             VertexAttributeDescriptions = attrs,
         };
 
@@ -173,6 +180,26 @@ public sealed unsafe class SpriteBatch : IDisposable
         s->X = x; s->Y = y; s->HalfW = halfW; s->HalfH = halfH;
         s->R = c.R; s->G = c.G; s->B = c.B; s->A = c.A;
         s->Rotation = rotation; s->Shape = (float)shape; s->P0 = p0; s->P1 = p1;
+        s->U0 = 0; s->V0 = 0; s->U1 = 0; s->V1 = 0;
+    }
+
+    /// <summary>
+    /// Draws an atlas region centred at (x, y). <paramref name="height"/> is the on-screen height in
+    /// arena units; width follows the source aspect ratio. Returns false if the region is missing.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool Sprite(in SpriteRegion r, float x, float y, float height, Color4 tint, float rotation = 0)
+    {
+        if (!r.IsValid) return false;
+        if (Count >= Capacity) { Dropped++; return true; }
+        float halfH = height * 0.5f;
+        float halfW = halfH * r.Width / r.Height;
+        SpriteInstance* s = _write + Count++;
+        s->X = x; s->Y = y; s->HalfW = halfW; s->HalfH = halfH;
+        s->R = tint.R; s->G = tint.G; s->B = tint.B; s->A = tint.A;
+        s->Rotation = rotation; s->Shape = (float)SpriteShape.Textured; s->P0 = 0; s->P1 = 0;
+        s->U0 = r.U0; s->V0 = r.V0; s->U1 = r.U1; s->V1 = r.V1;
+        return true;
     }
 
     public void Circle(float x, float y, float radius, Color4 c, SpriteShape shape = SpriteShape.Disc, float p0 = 0, float p1 = 0)
@@ -187,6 +214,8 @@ public sealed unsafe class SpriteBatch : IDisposable
     {
         if (Count == 0) return;
         cmd.BindPipeline(VkPipelineBindPoint.Graphics, _pipeline);
+        var set = _atlas.Set;
+        cmd.BindDescriptorSets(VkPipelineBindPoint.Graphics, _layout, 0, new ReadOnlySpan<VkDescriptorSet>(&set, 1), Span<Brutal.ByteSize32>.Empty);
         var pc = new PushConstants
         {
             ScaleX = view.Scale * 2f / view.FramebufferWidth,

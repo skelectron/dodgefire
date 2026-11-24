@@ -15,8 +15,8 @@ namespace Crossfire.Render;
 public sealed class GameRenderer
 {
     // Team palette: A = cyan, B = magenta. Bullets take the colour of the team that FIRED them.
-    public static readonly Color4[] TeamColor = [new(0.22f, 0.88f, 1.00f), new(1.00f, 0.32f, 0.78f)];
-    public static readonly string[] TeamName = ["CYAN", "MAGENTA"];
+    public static readonly Color4[] TeamColor = [new(0.30f, 0.78f, 1.00f), new(1.00f, 0.36f, 0.42f)];
+    public static readonly string[] TeamName = ["BLUE", "RED"];
     private static readonly Color4[] HalfTint = [new(0.045f, 0.065f, 0.095f), new(0.085f, 0.05f, 0.085f)];
     private static readonly string[] PatternNames = ["Ring", "Spiral", "Aimed", "Wall"];
     private static readonly Color4 White = new(1, 1, 1);
@@ -30,14 +30,23 @@ public sealed class GameRenderer
     /// <summary>Per player slot: control hints shown in the HUD, e.g. ["WASD", "L-Shift", "Q E R F", "Space"].</summary>
     public string[][] ControlHints { get; set; } = [];
 
+    /// <summary>Per player slot: optional tag shown in the HUD, e.g. "BOT · HARD". Null for humans.</summary>
+    public string?[] PlayerTags { get; set; } = new string?[SimState.MaxPlayers];
+
+    /// <summary>Kenney sprites + font. When a region is missing the SDF fallback is drawn instead.</summary>
+    public GameArt? Art { get; set; }
+
     private struct Effect
     {
-        public float X, Y, Age, Life, Radius;
+        public float X, Y, Age, Life, Radius, Spin;
         public Color4 Color;
         public SpriteShape Shape;
+        public SpriteRegion Region;
     }
 
     private readonly Effect[] _effects = new Effect[128];
+    private readonly int[] _variantScratch = new int[2];
+    private static readonly string[] PlayerLabels = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"];
     private int _effectCursor;
     private float _shake;
     private readonly Random _fxRandom = new(1);
@@ -63,10 +72,20 @@ public sealed class GameRenderer
                 case SimEventType.Death:
                     Spawn(x, y, 220, 0.8f, TeamColor[e.Team], SpriteShape.Ring);
                     Spawn(x, y, 120, 0.6f, White.WithAlpha(0.8f), SpriteShape.Glow);
+                    if (Art != null)
+                        for (int k = 0; k < 10; k++)
+                        {
+                            float ang = k * MathF.Tau / 10f + (float)_fxRandom.NextDouble() * 0.5f;
+                            float dist = 20 + _fxRandom.Next(0, 50);
+                            SpawnSprite(x + MathF.Cos(ang) * dist, y + MathF.Sin(ang) * dist, 18 + _fxRandom.Next(0, 14), 0.7f, Color4.Lerp(White, TeamColor[e.Team], 0.4f), Art.Stars[k % 3]);
+                        }
                     _shake = Math.Max(_shake, 16f);
                     break;
                 case SimEventType.Graze:
-                    Spawn(x + _fxRandom.Next(-8, 9), y + _fxRandom.Next(-8, 9), 8, 0.2f, White.WithAlpha(0.7f), SpriteShape.Glow);
+                    if (Art != null && Art.Stars[0].IsValid)
+                        SpawnSprite(x + _fxRandom.Next(-14, 15), y + _fxRandom.Next(-14, 15), 10, 0.3f, new Color4(1f, 0.95f, 0.6f), Art.Stars[_fxRandom.Next(0, 3)]);
+                    else
+                        Spawn(x + _fxRandom.Next(-8, 9), y + _fxRandom.Next(-8, 9), 8, 0.2f, White.WithAlpha(0.7f), SpriteShape.Glow);
                     break;
                 case SimEventType.Placed:
                     Spawn(x, y, 34, 0.25f, TeamColor[e.Team], SpriteShape.Ring);
@@ -84,6 +103,17 @@ public sealed class GameRenderer
     private void Spawn(float x, float y, float radius, float life, Color4 c, SpriteShape shape)
     {
         _effects[_effectCursor] = new Effect { X = x, Y = y, Radius = radius, Life = life, Color = c, Shape = shape };
+        _effectCursor = (_effectCursor + 1) % _effects.Length;
+    }
+
+    private void SpawnSprite(float x, float y, float size, float life, Color4 c, SpriteRegion region)
+    {
+        if (!region.IsValid) return;
+        _effects[_effectCursor] = new Effect
+        {
+            X = x, Y = y, Radius = size, Life = life, Color = c, Shape = SpriteShape.Textured, Region = region,
+            Spin = (float)(_fxRandom.NextDouble() * 2 - 1) * 6f,
+        };
         _effectCursor = (_effectCursor + 1) % _effects.Length;
     }
 
@@ -113,9 +143,19 @@ public sealed class GameRenderer
         bool playing = s.Phase == MatchPhase.Playing;
         float a = playing ? alpha : 0f;
 
-        // 1. Halves, faint grid, midline.
+        // 1. Space background (tiled Kenney texture, dimmed), team-tinted halves, faint grid, midline.
         b.Rect(0, 0, mid, h, HalfTint[0]);
         b.Rect(mid, 0, mid, h, HalfTint[1]);
+        if (Art != null && Art.Background.IsValid)
+        {
+            const float tile = 192;
+            var bgTint = new Color4(0.42f, 0.42f, 0.5f, 1f);
+            for (float ty = 0; ty < h; ty += tile)
+                for (float tx = 0; tx < w; tx += tile)
+                    b.Sprite(Art.Background, tx + tile * 0.5f, ty + tile * 0.5f, tile, bgTint);
+            b.Rect(0, 0, mid, h, TeamColor[0].WithAlpha(0.06f));
+            b.Rect(mid, 0, mid, h, TeamColor[1].WithAlpha(0.06f));
+        }
         var grid = new Color4(1, 1, 1, 0.025f);
         for (float gx = 80; gx < w; gx += 80) if (Math.Abs(gx - mid) > 1) b.Rect(gx - 0.5f, 0, 1, h, grid);
         for (float gy = 80; gy < h; gy += 80) b.Rect(0, gy - 0.5f, w, 1, grid);
@@ -179,22 +219,50 @@ public sealed class GameRenderer
             b.Add(x, y, rad, rad, pool.Half[i] == 0 ? c0 : c1, SpriteShape.Bullet);
         }
 
-        // 5. Dodgers.
+        // 5. Dodgers: Kenney ships facing the midline, thrusters, shield; the hitbox dot always on top.
+        int[] variantCounter = _variantScratch;
+        variantCounter[0] = variantCounter[1] = 0;
         for (int i = 0; i < s.PlayerCount; i++)
         {
             ref readonly var p = ref s.Players[i];
             if (!p.IsDodger) continue;
+            int variant = Math.Min(1, variantCounter[p.Team]++);
             float x = Lerp(F(p.PrevPos.X), F(p.Pos.X), a), y = Lerp(F(p.PrevPos.Y), F(p.Pos.Y), a);
             var c = TeamColor[p.Team];
+            var ship = Art != null ? Art.Ship[p.Team, variant] : default;
+            float facing = p.Team == 0 ? MathF.PI / 2 : -MathF.PI / 2; // nose toward the midline
             if (p.Lives <= 0)
             {
-                b.Circle(x, y, 12, new Color4(0.5f, 0.5f, 0.5f, 0.5f), SpriteShape.Cross, 0.12f, 0f);
+                if (!b.Sprite(ship, x, y, 30, new Color4(0.35f, 0.35f, 0.4f, 0.55f), facing))
+                    b.Circle(x, y, 12, new Color4(0.5f, 0.5f, 0.5f, 0.5f), SpriteShape.Cross, 0.12f, 0f);
                 continue;
             }
             bool blink = p.InvulnTicks > 0 && (p.InvulnTicks / 4) % 2 == 0;
-            float bodyAlpha = blink ? 0.25f : 1f;
-            b.Circle(x, y, 34, c.WithAlpha(0.22f * bodyAlpha), SpriteShape.Glow);
-            b.Add(x, y, 13, 13, c.WithAlpha(bodyAlpha), SpriteShape.Diamond, 0.22f);
+            float bodyAlpha = blink ? 0.35f : 1f;
+            b.Circle(x, y, 34, c.WithAlpha(0.18f * bodyAlpha), SpriteShape.Glow);
+            if (ship.IsValid)
+            {
+                // Bank slightly with vertical movement (screen-space "lean"); thrust flame while moving.
+                float vy = F(p.Pos.Y) - F(p.PrevPos.Y), vx = F(p.Pos.X) - F(p.PrevPos.X);
+                float bank = Math.Clamp(vy * 0.06f, -0.3f, 0.3f) * (p.Team == 0 ? 1 : -1);
+                float rot = facing + bank;
+                bool moving = MathF.Abs(vx) + MathF.Abs(vy) > 0.01f;
+                var fire = Art!.Fire[(s.Tick / 3 + i) & 3];
+                if (fire.IsValid)
+                {
+                    // Behind the ship: opposite of the nose direction.
+                    float bx = -MathF.Sin(rot), by = MathF.Cos(rot);
+                    float len = moving ? (p.Focus ? 12 : 18) : 8;
+                    b.Sprite(fire, x + bx * (14 + len * 0.5f), y + by * (14 + len * 0.5f), len, White.WithAlpha(0.9f * bodyAlpha), rot);
+                }
+                b.Sprite(ship, x, y, 30, White.WithAlpha(bodyAlpha), rot);
+                if (p.InvulnTicks > 0 && Art.Shield.IsValid)
+                    b.Sprite(Art.Shield, x, y, 50, c.WithAlpha(0.55f + 0.25f * MathF.Sin(p.InvulnTicks * 0.4f)), facing);
+            }
+            else
+            {
+                b.Add(x, y, 13, 13, c.WithAlpha(bodyAlpha), SpriteShape.Diamond, 0.22f);
+            }
             if (p.Focus) b.Circle(x, y, 20, White.WithAlpha(0.55f), SpriteShape.Ring, 0.08f);
             if (p.InvulnTicks > 0) b.Circle(x, y, 24, White.WithAlpha(0.35f), SpriteShape.Arc, p.InvulnTicks / (float)r.InvulnTicks, 0.08f);
             float hb = MathF.Max(F(r.HitboxRadius), 2.5f);
@@ -214,6 +282,8 @@ public sealed class GameRenderer
             b.Circle(x, y, 18, c.WithAlpha(0.85f), SpriteShape.Cross, 0.09f, 0.3f);
             b.Circle(x, y, 13, c.WithAlpha(0.6f), SpriteShape.Ring, 0.1f);
             if (blocked) b.Circle(x, y, 22, Danger.WithAlpha(0.8f), SpriteShape.Ring, 0.08f);
+            // Small team ship marker: shows who owns this reticle.
+            if (Art != null) b.Sprite(Art.Ship[p.Team, 0], x + 22, y - 20, 13, White.WithAlpha(0.75f), p.Team == 0 ? MathF.PI / 2 : -MathF.PI / 2);
         }
 
         // 7. Effects.
@@ -223,6 +293,11 @@ public sealed class GameRenderer
             if (fx.Life <= 0) continue;
             float t = fx.Age / fx.Life;
             if (t >= 1) { fx.Life = 0; continue; }
+            if (fx.Shape == SpriteShape.Textured)
+            {
+                b.Sprite(fx.Region, fx.X, fx.Y, fx.Radius * (1 - 0.4f * t), fx.Color.WithAlpha(fx.Color.A * (1 - t)), fx.Spin * fx.Age);
+                continue;
+            }
             float rad = fx.Shape == SpriteShape.Ring ? fx.Radius * (0.3f + 0.7f * t) : fx.Radius;
             b.Circle(fx.X, fx.Y, rad, fx.Color.WithAlpha(fx.Color.A * (1 - t)), fx.Shape, fx.Shape == SpriteShape.Cross ? 0.12f : 0.06f, fx.Shape == SpriteShape.Cross ? 0f : 0f);
         }
@@ -258,6 +333,9 @@ public sealed class GameRenderer
             float x0 = team == 0 ? 14 : windowW - 14 - TeamPanelWidth;
             float y = 8;
             Text(dl, TeamName[team], x0, y, 15, TeamColor[team]);
+            for (int i = 0; i < s.PlayerCount; i++)
+                if (s.Players[i].Active && s.Players[i].Team == team && PlayerTags[i] is { } tag)
+                    Text(dl, tag, x0 + 70, y + 2, 12, new Color4(1f, 0.85f, 0.35f));
             y += 20;
             for (int i = 0; i < s.PlayerCount; i++)
             {
@@ -287,7 +365,7 @@ public sealed class GameRenderer
             float a = s.Phase == MatchPhase.Playing ? alpha : 0f;
             float x = ui.ToPixelX(Lerp(F(p.PrevPos.X), F(p.Pos.X), a));
             float y = ui.ToPixelY(Lerp(F(p.PrevPos.Y), F(p.Pos.Y), a));
-            Text(fg, $"P{i + 1}", x, y - 36 * ui.Scale, 13, TeamColor[p.Team].WithAlpha(0.8f), center: true);
+            Text(fg, PlayerTags[i] != null ? "BOT" : PlayerLabels[i], x, y - 36 * ui.Scale, 13, TeamColor[p.Team].WithAlpha(0.8f), center: true);
         }
 
         DrawBanner(fg, s, ui);
@@ -302,12 +380,25 @@ public sealed class GameRenderer
         if (p.Role == PlayerRole.Dodger)
         {
             Text(dl, "DODGER", x + 30, y + 3, 12, new Color4(0.7f, 0.72f, 0.78f));
+            var life = Art != null ? Art.Life[p.Team, 0] : default;
             for (int l = 0; l < r.DodgerLives; l++)
             {
                 var center = new float2(x + 100 + l * 20, y + 10);
                 bool alive = l < p.Lives;
-                ImDrawListExtensions.AddCircleFilled(dl, in center, 7, Col(alive ? c : new Color4(0.25f, 0.25f, 0.3f)), 16);
-                ImDrawListExtensions.AddCircle(dl, in center, 7, Col(new Color4(0, 0, 0, 0.8f)), 16, 1.5f);
+                if (life.IsValid && Art!.HasAtlasTexture)
+                {
+                    // Kenney life icon (33x26) from the shared atlas; lost lives are dimmed.
+                    var pMin = new float2(center.X - 8, center.Y - 6.5f);
+                    var pMax = new float2(center.X + 8, center.Y + 6.5f);
+                    float2? uvMin = new float2(life.U0, life.V0), uvMax = new float2(life.U1, life.V1);
+                    ImColor8? tint = alive ? new ImColor8(255, 255, 255, 255) : new ImColor8(70, 70, 80, 160);
+                    ImDrawListExtensions.AddImage(dl, Art.AtlasTexture, in pMin, in pMax, in uvMin, in uvMax, tint);
+                }
+                else
+                {
+                    ImDrawListExtensions.AddCircleFilled(dl, in center, 7, Col(alive ? c : new Color4(0.25f, 0.25f, 0.3f)), 16);
+                    ImDrawListExtensions.AddCircle(dl, in center, 7, Col(new Color4(0, 0, 0, 0.8f)), 16, 1.5f);
+                }
             }
             Text(dl, $"graze {p.Grazes}", x + 100 + r.DodgerLives * 20 + 6, y + 3, 12, new Color4(0.6f, 0.62f, 0.68f));
         }
@@ -331,7 +422,7 @@ public sealed class GameRenderer
                 float w = 46;
                 Rect(dl, sx, y + 2, w, 18, new Color4(0.08f, 0.08f, 0.1f));
                 Rect(dl, sx, y + 2, w * (1 - cd), 18, sc.WithAlpha(cd > 0 ? 0.6f : 0.85f));
-                Text(dl, PatternNames[(int)def.Kind], sx + w * 0.5f, y + 4, 12, affordable && cd <= 0 ? new Color4(0.05f, 0.05f, 0.08f) : new Color4(0.85f, 0.85f, 0.9f), center: true);
+                Text(dl, PatternNames[(int)def.Kind], sx + w * 0.5f, y + 5, 10.5f, affordable && cd <= 0 ? new Color4(0.05f, 0.05f, 0.08f) : new Color4(0.85f, 0.85f, 0.9f), center: true);
                 sx += w + 4;
             }
         }
@@ -420,16 +511,18 @@ public sealed class GameRenderer
         Rect(dl, cx - w * 0.5f, cy - h * 0.5f, w, h, new Color4(0.02f, 0.02f, 0.04f, 0.72f));
     }
 
-    private static void Text(ImDrawListPtr dl, ImString text, float x, float y, float size, Color4 c, bool center = false, bool rightAlign = false)
+    private ImFontPtr HudFont => Art?.Font ?? ImGui.GetFont();
+
+    private void Text(ImDrawListPtr dl, ImString text, float x, float y, float size, Color4 c, bool center = false, bool rightAlign = false)
     {
         if (center || rightAlign)
         {
             // Measure at the actual draw size (glyph advances don't scale linearly with size).
-            var sz = ImFontExtensions.CalcTextSizeA(ImGui.GetFont(), size, float.MaxValue, 0f, text, default);
+            var sz = ImFontExtensions.CalcTextSizeA(HudFont, size, float.MaxValue, 0f, text, default);
             x -= center ? sz.X * 0.5f : sz.X;
         }
         var pos = new float2(x, y);
         Brutal.Numerics.float4? clip = null;
-        ImDrawListExtensions.AddText(dl, ImGui.GetFont(), size, in pos, Col(c), text, 0f, in clip);
+        ImDrawListExtensions.AddText(dl, HudFont, size, in pos, Col(c), text, 0f, in clip);
     }
 }

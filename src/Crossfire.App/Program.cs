@@ -34,9 +34,18 @@ var windowInfo = new GlfwWindow.CreateInfo { Title = "CROSSFIRE", Size = new int
 GlfwWindow window = Glfw.CreateWindow(in windowInfo);
 
 var vk = new VulkanContext(window, validate, vsync);
-var batch = new SpriteBatch(vk);
+// Kenney art (CC0): sprites packed into one atlas; the renderer falls back to SDF shapes if any are missing.
+var atlas = new TextureAtlas(vk, GameArt.SpriteFiles(AppContext.BaseDirectory));
+var batch = new SpriteBatch(vk, atlas);
 var imgui = new ImGuiLayer(window, vk);
-var renderer = new GameRenderer();
+var art = new GameArt(atlas)
+{
+    AtlasTexture = imgui.AddTexture(atlas.Sampler, atlas.View),
+    HasAtlasTexture = atlas.Count > 0,
+    HudFont = imgui.LoadFont(Path.Combine(AppContext.BaseDirectory, GameArt.FontPath), 18f),
+};
+Console.WriteLine($"Loaded {atlas.Count} Kenney sprites");
+var renderer = new GameRenderer { Art = art };
 var keyboard = new KeyboardInput(window);
 var sim = new Simulation();
 var state = SimState.CreateMatch(setup, seed);
@@ -129,6 +138,7 @@ while (!window.ShouldClose)
 vk.Device.WaitIdle();
 imgui.Dispose();
 batch.Dispose();
+atlas.Dispose();
 sim.Dispose();
 state.Dispose();
 vk.Dispose();

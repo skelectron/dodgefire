@@ -430,6 +430,26 @@ public sealed unsafe class VulkanContext : IDisposable
         _frame = (_frame + 1) % FramesInFlight;
     }
 
+    /// <summary>Records and submits a one-off command buffer, then waits for it (used for uploads at load time).</summary>
+    public void ImmediateSubmit(Action<CommandBuffer> record)
+    {
+        Span<CommandBuffer> cmds = stackalloc CommandBuffer[1];
+        DeviceExtensions.AllocateCommandBuffers(Device, new VkCommandBufferAllocateInfo
+        {
+            CommandPool = _commandPool,
+            Level = VkCommandBufferLevel.Primary,
+        }, cmds);
+        var cmd = cmds[0];
+        CommandBufferExtensions.Begin(cmd, VkCommandBufferUsageFlags.OneTimeSubmitBit);
+        record(cmd);
+        cmd.End();
+        var fence = Device.CreateFence(new VkFenceCreateInfo(), null);
+        QueueExtensions.Submit(Queue, Span<VkSemaphore>.Empty, Span<VkPipelineStageFlags>.Empty, cmds, Span<VkSemaphore>.Empty, fence);
+        Device.WaitForFences(new ReadOnlySpan<VkFence>(&fence, 1), new Brutal.Bool32(true), nint.MaxValue);
+        Device.DestroyFence(fence, null);
+        DeviceExtensions.FreeCommandBuffers(Device, _commandPool, cmds);
+    }
+
     /// <summary>Allocates a host-visible, coherent, persistently mapped buffer.</summary>
     public (VkBuffer Buffer, VkDeviceMemory Memory, nint Mapped) CreateMappedBuffer(long size, VkBufferUsageFlags usage)
     {

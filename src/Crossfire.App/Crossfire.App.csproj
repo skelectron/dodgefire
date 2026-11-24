@@ -10,4 +10,8 @@
     <ProjectReference Include="..\Crossfire.Render\Crossfire.Render.csproj" />
     <ProjectReference Include="..\Crossfire.Audio\Crossfire.Audio.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Kenney CC0 art + fonts, copied next to the executable. -->
+    <Content Include="..\..\assets\kenney\**\*" LinkBase="assets\kenney" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
