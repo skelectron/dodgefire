@@ -38,6 +38,9 @@ public sealed class ImGuiLayer : IDisposable
     }
 
     public bool WantsKeyboard => ImGui.GetIO().WantCaptureKeyboard;
+    public bool WantsMouse => ImGui.GetIO().WantCaptureMouse;
+    /// <summary>Wheel movement this frame (valid after <see cref="NewFrame"/>).</summary>
+    public float MouseWheel => ImGui.GetIO().MouseWheel;
 
     /// <summary>Adds a TTF font (the default font stays the default). Returns a null font pointer on failure.</summary>
     public ImFontPtr LoadFont(string path, float sizePixels)

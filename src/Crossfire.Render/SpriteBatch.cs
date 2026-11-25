@@ -18,6 +18,10 @@ public enum SpriteShape
     Disc = 7,
     /// <summary>Atlas texture region (UV), multiplied by the tint colour.</summary>
     Textured = 8,
+    /// <summary>Procedural animated nebula (fbm noise). P0 = time in seconds, P1 = palette (0 = blue, 1 = red).</summary>
+    Nebula = 9,
+    /// <summary>Darkening toward the quad's edges; colour = vignette colour, A = strength.</summary>
+    Vignette = 10,
 }
 
 /// <summary>Per-instance data uploaded to the GPU (64 bytes, matches sprite.vert inputs).</summary>
@@ -188,12 +192,12 @@ public sealed unsafe class SpriteBatch : IDisposable
     /// arena units; width follows the source aspect ratio. Returns false if the region is missing.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool Sprite(in SpriteRegion r, float x, float y, float height, Color4 tint, float rotation = 0)
+    public bool Sprite(in SpriteRegion r, float x, float y, float height, Color4 tint, float rotation = 0, float widthScale = 1f)
     {
         if (!r.IsValid) return false;
         if (Count >= Capacity) { Dropped++; return true; }
         float halfH = height * 0.5f;
-        float halfW = halfH * r.Width / r.Height;
+        float halfW = halfH * r.Width / r.Height * widthScale;
         SpriteInstance* s = _write + Count++;
         s->X = x; s->Y = y; s->HalfW = halfW; s->HalfH = halfH;
         s->R = tint.R; s->G = tint.G; s->B = tint.B; s->A = tint.A;
@@ -283,4 +287,6 @@ public readonly struct ArenaView
 
     public float ToPixelX(float x) => OffsetX + x * Scale;
     public float ToPixelY(float y) => OffsetY + y * Scale;
+    public float ToArenaX(float px) => (px - OffsetX) / Scale;
+    public float ToArenaY(float py) => (py - OffsetY) / Scale;
 }

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using Crossfire.Sim.Patterns;
 using Crossfire.Sim.Rules;
 
 namespace Crossfire.Sim.Players;
@@ -35,12 +36,26 @@ public struct Player
     public int InvulnTicks;
     public bool Focus;
     public int Grazes;
+    /// <summary>Ticks left in the current flip (0 = not flipping).</summary>
+    public int FlipTicks;
+    /// <summary>Ticks until the next flip is allowed.</summary>
+    public int FlipCooldown;
+    /// <summary>True while the flip can still absorb one bullet.</summary>
+    public bool FlipGuard;
+    /// <summary>Break meter, filled by grazing; full = can clear the half.</summary>
+    public Fix Break;
 
     // Gunner
     public FixVec2 Cursor;
     public FixVec2 PrevCursor;
     public Fix Energy;
     public CooldownArray Cooldowns;
+    /// <summary>The 4 patterns on this player's buttons (used whenever they are the Gunner).</summary>
+    public Loadout Loadout;
+    /// <summary>Overdrive charge (full = can activate).</summary>
+    public Fix Overdrive;
+    /// <summary>Ticks of Overdrive left (0 = inactive).</summary>
+    public int OverdriveTicks;
     /// <summary>Tick of the last rejected placement (UI feedback), -1 if none.</summary>
     public int LastRejectTick;
 

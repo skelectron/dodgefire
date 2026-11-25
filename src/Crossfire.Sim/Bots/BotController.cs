@@ -25,21 +25,23 @@ public readonly record struct BotTuning(
     int ScanRadius,
     int Padding,
     int LapsePercent,
-    int LapseTicks)
+    int LapseTicks,
+    bool UseFlip,
+    int BreakCrowd)
 {
     public static BotTuning For(BotDifficulty d) => d switch
     {
         BotDifficulty.Easy => new(HorizonTicks: 6, ThinkEvery: 10, NoiseScore: 40_000, UseFocus: false, GunnerThinkEvery: 6, MinEnergy: 80, AllPatterns: false, Combos: false,
-            ScanRadius: 80, Padding: 0, LapsePercent: 22, LapseTicks: 24),
-        BotDifficulty.Normal => new(12, 4, 6_000, true, 3, 0, true, false, ScanRadius: 140, Padding: 2, LapsePercent: 8, LapseTicks: 14),
-        _ => new(24, 1, 0, true, 1, 0, true, true, ScanRadius: 240, Padding: 6, LapsePercent: 0, LapseTicks: 0),
+            ScanRadius: 80, Padding: 0, LapsePercent: 22, LapseTicks: 24, UseFlip: false, BreakCrowd: 10),
+        BotDifficulty.Normal => new(12, 4, 6_000, true, 3, 0, true, false, ScanRadius: 140, Padding: 2, LapsePercent: 8, LapseTicks: 14, UseFlip: true, BreakCrowd: 6),
+        _ => new(24, 1, 0, true, 1, 0, true, true, ScanRadius: 240, Padding: 6, LapsePercent: 0, LapseTicks: 0, UseFlip: true, BreakCrowd: 4),
     };
 }
 
 /// <summary>
 /// Per-slot bot memory. Lives outside <see cref="SimState"/> (like a human's brain), but it is a
 /// deterministic function of the states it has seen plus its own seeded RNG, so a bot's inputs
-/// are reproducible — and they are ordinary <see cref="SimInput"/>s, so netcode is unaffected.
+/// are reproducible 鈥?and they are ordinary <see cref="SimInput"/>s, so netcode is unaffected.
 /// </summary>
 public struct BotBrain
 {
@@ -73,6 +75,14 @@ public struct BotBrain
 /// <summary>Produces a <see cref="SimInput"/> for a bot-controlled slot, whatever role it currently has.</summary>
 public static class BotController
 {
+    /// <summary>
+    /// The loadout a bot brings: Easy keeps the classic four; Normal/Hard pick a preset from their seed
+    /// (deterministic, so the same bots always field the same patterns).
+    /// </summary>
+    public static Loadout LoadoutFor(BotDifficulty d, uint seed) => d == BotDifficulty.Easy
+        ? Loadout.Classic
+        : (seed % 3) switch { 0 => Loadout.Hunter, 1 => Loadout.Trapper, _ => Loadout.Classic };
+
     public static SimInput Think(SimState s, int slot, ref BotBrain brain)
     {
         ref readonly var p = ref s.Players[slot];
@@ -113,6 +123,7 @@ internal static class DodgerBot
 
     private const int MaxBullets = 512;
     private const int Diag = 46341; // 1/sqrt(2) in Q16.16
+    private const int FlipMargin = 4; // arena units of clearance below which the bot flips
 
     public static unsafe SimInput Think(SimState s, int slot, ref BotBrain brain, BotTuning t)
     {
@@ -163,19 +174,21 @@ internal static class DodgerBot
             n++;
         }
 
-        bool allowFocus = t.UseFocus && crowded >= 5;
+        bool flipping = p.FlipTicks > 0; // the dash ignores focus and moves faster: plan with the real speed
+        bool allowFocus = t.UseFocus && crowded >= 5 && !flipping;
         int horizon = Math.Max(2, t.HorizonTicks);
         int s1 = Math.Max(2, horizon / 4), s2 = horizon / 2, s3 = horizon;
 
         long bestScore = long.MaxValue;
         int bestX = 0, bestY = 0;
-        bool bestFocus = false;
+        bool bestFocus = false, bestNearHit = false;
         int heldDx = Math.Sign(brain.HeldX), heldDy = Math.Sign(brain.HeldY);
         int cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
 
         for (int focus = 0; focus <= (allowFocus ? 1 : 0); focus++)
         {
-            int speed = (focus == 1 ? r.DodgerFocusSpeed : r.DodgerSpeed).Raw >> 8; // 1/256 units per tick
+            Fix speedFix = flipping ? r.DodgerSpeed * r.FlipSpeedMultiplier : focus == 1 ? r.DodgerFocusSpeed : r.DodgerSpeed;
+            int speed = speedFix.Raw >> 8; // 1/256 units per tick
             for (int dy = -1; dy <= 1; dy++)
             for (int dx = -1; dx <= 1; dx++)
             {
@@ -187,6 +200,7 @@ internal static class DodgerBot
                 }
 
                 long score = 0;
+                bool nearHit = false;
                 // Evaluate a few sample times; nearer samples weigh more.
                 for (int k = 0; k < 3; k++)
                 {
@@ -203,6 +217,9 @@ internal static class DodgerBot
                         if (ex > soft || ex < -soft || ey > soft || ey < -soft) continue;
                         int d2 = ex * ex + ey * ey;
                         if (d2 < danger * danger) score += 1_000_000L * weight;
+                        // A close shave soon (within half the horizon, shorter than a flip): worth rolling through.
+                        int tight = danger + FlipMargin;
+                        if (k <= 1 && d2 < tight * tight) nearHit = true;
                         else if (d2 < soft * soft) score += (long)(soft * soft - d2) * weight;
                     }
                     if (k == 2)
@@ -224,6 +241,7 @@ internal static class DodgerBot
                     bestX = dx;
                     bestY = dy;
                     bestFocus = focus == 1;
+                    bestNearHit = nearHit;
                 }
             }
         }
@@ -231,7 +249,15 @@ internal static class DodgerBot
         brain.HeldX = (sbyte)(bestX * SimInput.AxisMax);
         brain.HeldY = (sbyte)(bestY * SimInput.AxisMax);
         brain.HeldFocus = bestFocus;
-        return Held(in brain);
+        var input = Held(in brain);
+
+        // Specials are edge-triggered and pressed only on a thinking tick; the next (held) tick releases them.
+        var buttons = input.Buttons;
+        if (t.BreakCrowd > 0 && crowded >= t.BreakCrowd && DodgerSystem.IsBreakReady(in p, in r))
+            buttons |= InputButtons.Super;
+        else if (t.UseFlip && bestNearHit && p.FlipCooldown == 0 && p.FlipTicks == 0 && p.InvulnTicks == 0)
+            buttons |= InputButtons.Flip; // even the best move gets hit soon: roll through it
+        return input with { Buttons = buttons };
     }
 
     private static SimInput Held(in BotBrain b) =>
@@ -293,7 +319,7 @@ internal static class GunnerBot
                 {
                     buttons |= button;
                     brain.GunnerCooldown = t.GunnerThinkEvery;
-                    if (t.Combos && r.Patterns[slotToFire].Kind == PatternKind.Ring && SlotOf(in r, PatternKind.Aimed) is int aimed and >= 0)
+                    if (t.Combos && p.Loadout[slotToFire] == PatternKind.Ring && p.Loadout.SlotOf(PatternKind.Aimed) is int aimed and >= 0)
                     {
                         brain.ComboSlot = aimed;
                         brain.ComboDelay = 12;
@@ -306,6 +332,10 @@ internal static class GunnerBot
             }
         }
 
+        // Overdrive as soon as it is charged and there is energy to spend during it.
+        if (canAct && GunnerSystem.IsOverdriveReady(in p, in r) && p.Energy >= Fix.FromInt(30) && (brain.LastButtons & InputButtons.Super) == 0)
+            buttons |= InputButtons.Super;
+
         brain.LastButtons = buttons;
         return Steer(p.Cursor, goal, buttons);
     }
@@ -316,12 +346,13 @@ internal static class GunnerBot
         ref readonly var r = ref s.Rules;
         if (p.Energy < Fix.FromInt(t.MinEnergy)) return -1;
 
-        int ring = SlotOf(in r, PatternKind.Ring), spiral = SlotOf(in r, PatternKind.Spiral);
-        int aimed = SlotOf(in r, PatternKind.Aimed), wall = SlotOf(in r, PatternKind.Wall);
+        ref readonly var lo = ref p.Loadout;
+        int ring = lo.SlotOf(PatternKind.Ring), aimed = lo.SlotOf(PatternKind.Aimed), wall = lo.SlotOf(PatternKind.Wall);
+        int sweep = lo.SlotOf(PatternKind.Sweep), homing = lo.SlotOf(PatternKind.Homing), mines = lo.SlotOf(PatternKind.Mines);
         Fix edge = Fix.FromInt(110);
         bool nearEdge = dodger.X - minX < edge || maxX - dodger.X < edge || dodger.Y < edge || h - dodger.Y < edge;
 
-        Span<int> prefs = stackalloc int[4];
+        Span<int> prefs = stackalloc int[8];
         int count = 0;
         if (!t.AllPatterns)
         {
@@ -330,10 +361,13 @@ internal static class GunnerBot
         }
         else
         {
+            // Situational picks first (only if that pattern is in the loadout), then a random slot.
             if (nearEdge) prefs[count++] = wall;
+            if (!nearEdge && brain.Rng.NextInt(3) == 0) prefs[count++] = sweep;      // beams shine mid-field
+            if (p.Energy >= Fix.FromInt(60)) prefs[count++] = homing;
+            if (brain.Rng.NextInt(3) == 0) prefs[count++] = mines;                    // area denial
             if (p.Energy < Fix.FromInt(40)) prefs[count++] = aimed;
-            int roll = brain.Rng.NextInt(3);
-            prefs[count++] = roll == 0 ? ring : roll == 1 ? spiral : aimed;
+            prefs[count++] = brain.Rng.NextInt(MatchRules.PatternSlots);
             prefs[count++] = aimed;
         }
         foreach (int k in prefs[..count])
@@ -358,12 +392,7 @@ internal static class GunnerBot
         brain.HasTarget = true;
     }
 
-    private static int SlotOf(in MatchRules r, PatternKind kind)
-    {
-        for (int k = 0; k < MatchRules.PatternSlots; k++)
-            if (r.Patterns[k].Kind == kind) return k;
-        return -1;
-    }
+
 
     private static FixVec2 ClampToHalf(FixVec2 v, Fix minX, Fix maxX, Fix h, Fix pad) =>
         new(Fix.Clamp(v.X, minX + pad, maxX - pad), Fix.Clamp(v.Y, pad, h - pad));
@@ -378,3 +407,4 @@ internal static class GunnerBot
         return new SimInput((sbyte)ax, (sbyte)ay, buttons);
     }
 }
+

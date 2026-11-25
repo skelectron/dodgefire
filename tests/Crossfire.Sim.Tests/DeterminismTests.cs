@@ -32,13 +32,13 @@ public class DeterminismTests
 
     /// <summary>
     /// Golden value: if this changes, simulation behaviour changed. That is fine when intended
-    /// (tuning, new rules) — update the constant — but it must never change by accident
+    /// (tuning, new rules) 鈥?update the constant 鈥?but it must never change by accident
     /// (platform, build config, threading).
     /// </summary>
     [Fact]
     public void Golden_hash_is_stable()
     {
-        const ulong Golden = 0x9B7FE6001E87E467;
+        const ulong Golden = 0x90987D0B18832AEB;
         ulong actual = RunMatch(TwoVsTwo, 1234, 5678);
         Assert.True(Golden == actual, $"Golden hash mismatch: expected 0x{Golden:X16}, actual 0x{actual:X16}");
     }

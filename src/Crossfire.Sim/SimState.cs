@@ -26,6 +26,18 @@ public enum SimEventType : byte
     RoundStart,
     RoundEnd,
     MatchEnd,
+    /// <summary>A Dodger started a flip.</summary>
+    Flip,
+    /// <summary>A flipping Dodger absorbed a bullet.</summary>
+    FlipBlock,
+    /// <summary>A Dodger spent a full Break bar and cleared its half.</summary>
+    Break,
+    /// <summary>An emitter finished its telegraph and fired its first volley (Other = pattern kind).</summary>
+    Fired,
+    /// <summary>A mine burst (Player = owner, Team = owner's team).</summary>
+    MineBurst,
+    /// <summary>A Gunner activated Overdrive.</summary>
+    Overdrive,
 }
 
 /// <summary>Things that happened this tick, for render/audio feedback only (not hashed).</summary>
@@ -35,10 +47,13 @@ public struct SimEvent
     public byte Player;
     public byte Team;
     public FixVec2 Pos;
+    /// <summary>Extra detail: the bullet owner for Hit/Death (0xFF = unknown), the graze count for Graze.</summary>
+    public byte Other;
 }
 
 /// <summary>One entry per player slot in a match.</summary>
-public readonly record struct PlayerSetup(int Team, PlayerRole Role);
+/// <summary>One entry per player slot in a match. <paramref name="Loadout"/> null = the classic four.</summary>
+public readonly record struct PlayerSetup(int Team, PlayerRole Role, Loadout? Loadout = null);
 
 /// <summary>
 /// The entire game state. Everything the simulation reads or writes lives here, so a state can be
@@ -101,16 +116,17 @@ public sealed class SimState : IDisposable
                 Role = players[i].Role,
                 StartRole = players[i].Role,
                 LastRejectTick = -1,
+                Loadout = players[i].Loadout ?? Loadout.Classic,
             };
         }
         MatchFlow.StartMatch(s);
         return s;
     }
 
-    public void PushEvent(SimEventType type, int player, int team, FixVec2 pos)
+    public void PushEvent(SimEventType type, int player, int team, FixVec2 pos, int other = 0xFF)
     {
         if (EventCount >= MaxEvents) return;
-        Events[EventCount++] = new SimEvent { Type = type, Player = (byte)player, Team = (byte)team, Pos = pos };
+        Events[EventCount++] = new SimEvent { Type = type, Player = (byte)player, Team = (byte)team, Pos = pos, Other = (byte)Math.Min(other, 0xFF) };
     }
 
     /// <summary>Overwrites this state with <paramref name="other"/> (no allocation).</summary>
@@ -163,9 +179,16 @@ public sealed class SimState : IDisposable
             h.Add(p.InvulnTicks);
             h.Add(p.Focus ? 1 : 0);
             h.Add(p.Grazes);
+            h.Add(p.FlipTicks);
+            h.Add(p.FlipCooldown);
+            h.Add(p.FlipGuard ? 1 : 0);
+            h.Add(p.Break.Raw);
             h.Add(p.Cursor);
             h.Add(p.Energy.Raw);
             for (int k = 0; k < MatchRules.PatternSlots; k++) h.Add(p.Cooldowns[k]);
+            for (int k = 0; k < MatchRules.PatternSlots; k++) h.Add((int)p.Loadout[k]);
+            h.Add(p.Overdrive.Raw);
+            h.Add(p.OverdriveTicks);
             h.Add(p.LastRejectTick);
         }
         for (int i = 0; i < MaxEmitters; i++)
@@ -173,7 +196,7 @@ public sealed class SimState : IDisposable
             ref readonly Emitter e = ref Emitters[i];
             if (!e.Active) continue;
             h.Add(i);
-            h.Add(e.PatternSlot);
+            h.Add((int)e.Kind);
             h.Add(e.Owner);
             h.Add(e.Half);
             h.Add(e.Pos);
@@ -189,6 +212,9 @@ public sealed class SimState : IDisposable
         h.AddBytes(b.Half, b.Count);
         h.AddBytes(b.Type, b.Count);
         h.AddBytes(b.Flags, b.Count);
+        h.AddBytes(b.Owner, b.Count);
+        h.AddBytes(b.Timer, b.Count * sizeof(ushort));
+        h.Add(b.SpecialCount);
         return h.Value;
     }
 
@@ -198,11 +224,17 @@ public sealed class SimState : IDisposable
         h.Add(r.DodgerLives); h.Add(r.DodgerSpeed.Raw); h.Add(r.DodgerFocusSpeed.Raw);
         h.Add(r.HitboxRadius.Raw); h.Add(r.GrazeRadius.Raw); h.Add(r.DodgerEdgeMargin.Raw);
         h.Add(r.InvulnTicks); h.Add(r.HitClearRadius.Raw);
+        h.Add(r.FlipTicks); h.Add(r.FlipCooldownTicks); h.Add(r.FlipSpeedMultiplier.Raw);
+        h.Add(r.DodgerPointerSpeed.Raw); h.Add(r.CursorPointerSpeed.Raw);
+        h.Add(r.OverdriveMax.Raw); h.Add(r.OverdrivePerEnergy.Raw); h.Add(r.OverdrivePerKill.Raw);
+        h.Add(r.OverdriveTicks); h.Add(r.OverdriveCooldownRate); h.Add(r.OverdriveRegenMultiplier);
+        h.Add(r.BreakMax.Raw); h.Add(r.BreakPerGraze.Raw); h.Add(r.BreakHitPenalty.Raw); h.Add(r.BreakInvulnTicks);
         h.Add(r.CursorSpeed.Raw); h.Add(r.EnergyMax.Raw); h.Add(r.EnergyStart.Raw); h.Add(r.EnergyRegenPerTick.Raw);
         h.Add(r.AntiSpawnRadius.Raw); h.Add(r.TelegraphTicks);
-        for (int k = 0; k < MatchRules.PatternSlots; k++)
+        for (int k = 0; k < MatchRules.PatternKinds; k++)
         {
             PatternDef d = r.Patterns[k];
+            h.Add(d.TimerTicks); h.Add(d.Extra);
             h.Add((int)d.Kind); h.Add((int)d.Bullet); h.Add(d.Cost.Raw); h.Add(d.CooldownTicks); h.Add(d.DurationTicks);
             h.Add(d.FireInterval); h.Add(d.BulletSpeed.Raw); h.Add(d.Count); h.Add(d.Spread); h.Add(d.SpinPerVolley);
         }

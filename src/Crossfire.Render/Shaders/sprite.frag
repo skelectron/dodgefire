@@ -20,6 +20,38 @@ const int SHAPE_DIAMOND = 5; // z = outline thickness
 const int SHAPE_CROSS   = 6; // z = bar thickness, w = centre gap
 const int SHAPE_DISC    = 7; // filled circle
 const int SHAPE_TEXTURED = 8; // atlas sprite * tint
+const int SHAPE_NEBULA  = 9; // z = time (s), w = palette (0 blue, 1 red); rgb = brightness
+const int SHAPE_VIGNETTE = 10; // darkens toward the edges; a = strength
+
+// Value noise + fbm for the nebula background.
+float hash21(vec2 p)
+{
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float vnoise(vec2 p)
+{
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), u.x),
+               mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+float fbm(vec2 p)
+{
+    // Rotating each octave hides the axis-aligned creases of value noise.
+    const mat2 rot = mat2(0.80, 0.60, -0.60, 0.80);
+    float v = 0.0, amp = 0.5;
+    for (int i = 0; i < 4; i++)
+    {
+        v += amp * vnoise(p);
+        p = rot * p * 2.03 + vec2(17.1, 9.2);
+        amp *= 0.5;
+    }
+    return v;
+}
 
 // Antialiased coverage of "inside" for signed distance d (in -1..1 local units).
 float cover(float d)
@@ -39,6 +71,33 @@ void main()
     if (shape == SHAPE_TEXTURED)
     {
         outColor = texture(uAtlas, vUV) * c;
+        return;
+    }
+    if (shape == SHAPE_NEBULA)
+    {
+        float t = vParams.z;
+        bool red = vParams.w > 0.5;
+        // Aspect-correct, resolution-independent coordinates; offset per half so the two differ.
+        vec2 q = p * vec2(vSizePx.x / max(vSizePx.y, 1.0), 1.0) * 1.7 + (red ? vec2(11.3, 4.7) : vec2(0.0));
+        // Domain warping: noise displaced by noise gives soft, swirling gas.
+        vec2 w = vec2(fbm(q + vec2(0.0, t * 0.020)), fbm(q + vec2(5.2, 1.3) - vec2(t * 0.015, 0.0)));
+        float n = fbm(q + 1.8 * w + vec2(t * 0.010, -t * 0.012));
+        float n2 = fbm(q * 2.3 - w + 3.1);
+        vec3 deep = red ? vec3(0.050, 0.015, 0.040) : vec3(0.015, 0.025, 0.070);
+        vec3 c1   = red ? vec3(0.400, 0.060, 0.220) : vec3(0.080, 0.250, 0.600);
+        vec3 c2   = red ? vec3(0.680, 0.240, 0.360) : vec3(0.420, 0.220, 0.750);
+        vec3 col = deep;
+        col = mix(col, c1, smoothstep(0.35, 0.85, n) * 0.70);
+        col = mix(col, c2, smoothstep(0.30, 0.75, n * n2 * 1.6) * 0.55);
+        col *= 0.70 + 0.30 * smoothstep(0.25, 0.70, n2); // darker dust lanes
+        outColor = vec4(col * c.rgb, c.a);
+        return;
+    }
+    if (shape == SHAPE_VIGNETTE)
+    {
+        float d = length(p * vec2(0.80, 1.0));
+        a = smoothstep(0.55, 1.30, d);
+        outColor = vec4(c.rgb, c.a * a);
         return;
     }
     if (shape == SHAPE_BULLET)

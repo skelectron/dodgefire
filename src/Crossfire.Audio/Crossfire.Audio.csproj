@@ -1,3 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Placeholder: SDL_mixer audio arrives in Phase 6. -->
+  <!-- Sound effects and music through SDL3_mixer (BRUTAL bindings). Reads simulation events; never writes the sim. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Crossfire.Sim\Crossfire.Sim.csproj" />
+    <PackageReference Include="Ahwoo.BRUTAL.Sdl" />
+    <PackageReference Include="Ahwoo.BRUTAL.Sdl.Mixer" />
+  </ItemGroup>
 </Project>

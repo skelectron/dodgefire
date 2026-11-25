@@ -15,10 +15,14 @@ public sealed class KeyboardScheme
     /// <summary>Pattern slots 1..4; each slot accepts any of its keys.</summary>
     public required GlfwKey[][] Patterns { get; init; }
     public required GlfwKey[] Start { get; init; }
-    /// <summary>Human-readable key hints for the HUD: move, focus, patterns, start.</summary>
+    /// <summary>Dodger flip (one-bullet dodge roll).</summary>
+    public required GlfwKey[] Flip { get; init; }
+    /// <summary>Super: Break for a Dodger (clear your half), Overdrive for a Gunner. Kept off the pattern keys.</summary>
+    public required GlfwKey[] Break { get; init; }
+    /// <summary>Human-readable key hints for the HUD: move, focus, patterns, start, flip, super (break/overdrive).</summary>
     public required string[] Hints { get; init; }
 
-    /// <summary>Left side: WASD, Left Shift, Q/E/R/F (or 1-4), Space.</summary>
+    /// <summary>Left side: WASD, Left Shift, Q/E/R/F (or 1-4), Space. Dodger: Space/C flip, X break. Gunner: X overdrive.</summary>
     public static KeyboardScheme LeftSide { get; } = new()
     {
         Name = "Keyboard L",
@@ -29,10 +33,12 @@ public sealed class KeyboardScheme
         Focus = [GlfwKey.LeftShift],
         Patterns = [[GlfwKey.Q, GlfwKey.Number1], [GlfwKey.E, GlfwKey.Number2], [GlfwKey.R, GlfwKey.Number3], [GlfwKey.F, GlfwKey.Number4]],
         Start = [GlfwKey.Space],
-        Hints = ["WASD", "L-Shift", "Q E R F", "Space"],
+        Flip = [GlfwKey.Space, GlfwKey.C],
+        Break = [GlfwKey.X],
+        Hints = ["WASD", "L-Shift", "Q E R F", "Space", "Space", "X"],
     };
 
-    /// <summary>Right side: arrows, Right Shift / Right Ctrl, Numpad 1-4 (or U/I/O/P), Enter.</summary>
+    /// <summary>Right side: arrows, Right Shift, Numpad 1-4 (or U/I/O/P), Enter. Dodger: Enter/Numpad 0 flip, Right Ctrl break. Gunner: Right Ctrl overdrive.</summary>
     public static KeyboardScheme RightSide { get; } = new()
     {
         Name = "Keyboard R",
@@ -40,10 +46,12 @@ public sealed class KeyboardScheme
         Down = [GlfwKey.Down],
         Left = [GlfwKey.Left],
         Right = [GlfwKey.Right],
-        Focus = [GlfwKey.RightShift, GlfwKey.RightControl],
+        Focus = [GlfwKey.RightShift],
         Patterns = [[GlfwKey.Kp1, GlfwKey.U], [GlfwKey.Kp2, GlfwKey.I], [GlfwKey.Kp3, GlfwKey.O], [GlfwKey.Kp4, GlfwKey.P]],
         Start = [GlfwKey.Enter, GlfwKey.KpEnter],
-        Hints = ["Arrows", "R-Shift", "U I O P", "Enter"],
+        Flip = [GlfwKey.Enter, GlfwKey.Kp0],
+        Break = [GlfwKey.RightControl],
+        Hints = ["Arrows", "R-Shift", "U I O P", "Enter", "Enter", "R-Ctrl"],
     };
 }
 
@@ -66,6 +74,8 @@ public sealed class KeyboardInput(GlfwWindow window)
         for (int i = 0; i < scheme.Patterns.Length && i < 4; i++)
             if (Down(scheme.Patterns[i])) buttons |= (InputButtons)((int)InputButtons.Pattern1 << i);
         if (Down(scheme.Start)) buttons |= InputButtons.Start;
+        if (Down(scheme.Flip)) buttons |= InputButtons.Flip;
+        if (Down(scheme.Break)) buttons |= InputButtons.Super;
         return new SimInput((sbyte)(x * SimInput.AxisMax), (sbyte)(y * SimInput.AxisMax), buttons);
     }
 

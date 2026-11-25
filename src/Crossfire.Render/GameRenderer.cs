@@ -1,6 +1,7 @@
 using Brutal.ImGuiApi;
 using Brutal.Numerics;
 using Crossfire.Sim;
+using Crossfire.Sim.Bullets;
 using Crossfire.Sim.Patterns;
 using Crossfire.Sim.Players;
 using Crossfire.Sim.Rules;
@@ -17,12 +18,41 @@ public sealed class GameRenderer
     // Team palette: A = cyan, B = magenta. Bullets take the colour of the team that FIRED them.
     public static readonly Color4[] TeamColor = [new(0.30f, 0.78f, 1.00f), new(1.00f, 0.36f, 0.42f)];
     public static readonly string[] TeamName = ["BLUE", "RED"];
-    private static readonly Color4[] HalfTint = [new(0.045f, 0.065f, 0.095f), new(0.085f, 0.05f, 0.085f)];
-    private static readonly string[] PatternNames = ["Ring", "Spiral", "Aimed", "Wall"];
+    public static readonly string[] PatternNames = ["Ring", "Spiral", "Aimed", "Wall", "Sweep", "Homing", "Mines"];
     private static readonly Color4 White = new(1, 1, 1);
     private static readonly Color4 Danger = new(1f, 0.25f, 0.2f);
 
+    /// <summary>Minimum height of the top HUD (1 player per team); grows by <see cref="HudRowHeight"/> per extra player.</summary>
     public const float HudTop = 76f;
+    private const float HudRowHeight = 22f;
+
+    /// <summary>Top HUD height for this match: room for every player row of the largest team.</summary>
+    public static float HudTopFor(SimState s)
+    {
+        int max = 0;
+        Span<int> perTeam = stackalloc int[SimState.TeamCount];
+        for (int i = 0; i < s.PlayerCount; i++)
+            if (s.Players[i].Active) max = Math.Max(max, ++perTeam[s.Players[i].Team]);
+        return Math.Max(HudTop, 34 + max * HudRowHeight);
+    }
+
+    /// <summary>The arena view without screen shake (for mapping the mouse into the arena).</summary>
+    public static ArenaView StableView(SimState s, float fbW, float fbH, float uiScale) =>
+        new(s.Rules.ArenaWidth, s.Rules.ArenaHeight, fbW, fbH, HudTopFor(s) * uiScale, HudBottom * uiScale);
+
+    /// <summary>Per player slot: the pattern a mouse Gunner has selected (highlighted in the HUD), or -1.</summary>
+    public int[] SelectedPattern { get; } = [-1, -1, -1, -1, -1, -1, -1, -1];
+
+    /// <summary>
+    /// Per player slot: draw at the latest simulated position instead of interpolating between ticks.
+    /// Used for mouse players, where interpolation would add a frame of visible lag behind the pointer.
+    /// </summary>
+    public bool[] Immediate { get; } = new bool[SimState.MaxPlayers];
+
+    /// <summary>False hides the match-over banner (the results screen / replay view show their own).</summary>
+    public bool ShowBanners { get; set; } = true;
+    /// <summary>Hide the per-player control hints in the bottom bar (replay view uses it).</summary>
+    public bool ShowControlHints { get; set; } = true;
     /// <summary>P label + role + energy bar + value + 4 pattern slots.</summary>
     private const float TeamPanelWidth = 92 + 120 + 34 + 4 * 50;
     public const float HudBottom = 30f;
@@ -42,6 +72,15 @@ public sealed class GameRenderer
     /// <summary>Per player slot: optional tag shown in the HUD, e.g. "BOT · HARD". Null for humans.</summary>
     public string?[] PlayerTags { get; set; } = new string?[SimState.MaxPlayers];
 
+    /// <summary>Per team: header tag, e.g. "BOT · HARD" or "YOU + 3 BOTS · HARD". Null = no tag.</summary>
+    public string?[] TeamTags { get; } = new string?[SimState.TeamCount];
+
+    /// <summary>The single human player's slot (labelled YOU), or -1 when there are 0 or several humans.</summary>
+    public int YouSlot { get; set; } = -1;
+
+    private static readonly Color4 YouColor = new(1f, 0.9f, 0.4f);
+    private static readonly Color4 OverdriveColor = new(1f, 0.78f, 0.25f);
+
     /// <summary>Kenney sprites + font. When a region is missing the SDF fallback is drawn instead.</summary>
     public GameArt? Art { get; set; }
 
@@ -60,6 +99,10 @@ public sealed class GameRenderer
     private float _shake;
     private readonly Random _fxRandom = new(1);
     private int _goBannerTicks;
+    private float _flash;
+    private int _suddenDeathMult = -1;
+    private string _suddenDeathText = "";
+    private int _flashTeam;
 
     private static float F(Fix f) => f.Raw * (1f / Fix.OneRaw);
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;
@@ -105,6 +148,49 @@ public sealed class GameRenderer
                 case SimEventType.RoundStart:
                     _goBannerTicks = 40;
                     break;
+                case SimEventType.Flip:
+                    Spawn(x, y, 30, 0.25f, White.WithAlpha(0.5f), SpriteShape.Ring);
+                    break;
+                case SimEventType.FlipBlock:
+                    // The absorbed bullet bursts into sparks.
+                    Spawn(x, y, 46, 0.35f, White, SpriteShape.Ring);
+                    Spawn(x, y, 40, 0.25f, new Color4(1f, 0.95f, 0.7f, 0.8f), SpriteShape.Glow);
+                    if (Art != null)
+                        for (int k = 0; k < 5; k++)
+                        {
+                            float ang = k * MathF.Tau / 5f + (float)_fxRandom.NextDouble();
+                            SpawnSprite(x + MathF.Cos(ang) * 22, y + MathF.Sin(ang) * 22, 12, 0.4f, new Color4(1f, 0.95f, 0.7f), Art.Stars[k % 3]);
+                        }
+                    _shake = Math.Max(_shake, 4f);
+                    break;
+                case SimEventType.Overdrive:
+                    Spawn(x, y, 90, 0.5f, OverdriveColor, SpriteShape.Ring);
+                    Spawn(x, y, 60, 0.4f, OverdriveColor.WithAlpha(0.6f), SpriteShape.Glow);
+                    _shake = Math.Max(_shake, 3f);
+                    break;
+                case SimEventType.MineBurst:
+                    Spawn(x, y, 40, 0.3f, TeamColor[e.Team], SpriteShape.Ring);
+                    Spawn(x, y, 26, 0.2f, White.WithAlpha(0.7f), SpriteShape.Glow);
+                    break;
+                case SimEventType.Break:
+                {
+                    // Shockwave across the whole half, flash, stars flung outward.
+                    float halfW = s.Rules.ArenaWidth * 0.5f;
+                    Spawn(x, y, halfW * 1.2f, 0.7f, TeamColor[e.Team], SpriteShape.Ring);
+                    Spawn(x, y, halfW * 0.8f, 0.5f, White.WithAlpha(0.8f), SpriteShape.Ring);
+                    Spawn(x, y, 180, 0.6f, TeamColor[e.Team].WithAlpha(0.7f), SpriteShape.Glow);
+                    if (Art != null)
+                        for (int k = 0; k < 14; k++)
+                        {
+                            float ang = k * MathF.Tau / 14f + (float)_fxRandom.NextDouble() * 0.4f;
+                            float dist = 40 + _fxRandom.Next(0, 160);
+                            SpawnSprite(x + MathF.Cos(ang) * dist, y + MathF.Sin(ang) * dist, 16 + _fxRandom.Next(0, 16), 0.8f, Color4.Lerp(White, TeamColor[e.Team], 0.5f), Art.Stars[k % 3]);
+                        }
+                    _flash = 1f;
+                    _flashTeam = e.Team;
+                    _shake = Math.Max(_shake, 14f);
+                    break;
+                }
             }
         }
     }
@@ -129,6 +215,8 @@ public sealed class GameRenderer
     /// <summary>Advances render-only effects by real time.</summary>
     public void Update(float dt)
     {
+        _time = (_time + dt) % 3600f; // wrap hourly to keep float precision in the shader
+        if (_flash > 0) _flash = Math.Max(0, _flash - dt * 2.5f);
         for (int i = 0; i < _effects.Length; i++)
             if (_effects[i].Life > 0) _effects[i].Age += dt;
         _shake = Math.Max(0, _shake - dt * 60f);
@@ -138,11 +226,12 @@ public sealed class GameRenderer
     /// <summary>Builds the arena view for the current framebuffer, including screen shake.</summary>
     public ArenaView MakeView(SimState s, float fbW, float fbH, float uiScale)
     {
-        var v = new ArenaView(s.Rules.ArenaWidth, s.Rules.ArenaHeight, fbW, fbH, HudTop * uiScale, HudBottom * uiScale);
+        float hudTop = HudTopFor(s);
+        var v = new ArenaView(s.Rules.ArenaWidth, s.Rules.ArenaHeight, fbW, fbH, hudTop * uiScale, HudBottom * uiScale);
         if (_shake <= 0) return v;
         float sx = (float)(_fxRandom.NextDouble() * 2 - 1) * _shake * 0.5f;
         float sy = (float)(_fxRandom.NextDouble() * 2 - 1) * _shake * 0.5f;
-        return new ArenaView(s.Rules.ArenaWidth, s.Rules.ArenaHeight, fbW, fbH, HudTop * uiScale + sy, HudBottom * uiScale - sy, sx);
+        return new ArenaView(s.Rules.ArenaWidth, s.Rules.ArenaHeight, fbW, fbH, hudTop * uiScale + sy, HudBottom * uiScale - sy, sx);
     }
 
     public unsafe void DrawArena(SpriteBatch b, SimState s, float alpha)
@@ -152,31 +241,16 @@ public sealed class GameRenderer
         bool playing = s.Phase == MatchPhase.Playing;
         float a = playing ? alpha : 0f;
 
-        // 1. Space background (tiled Kenney texture, dimmed), team-tinted halves, faint grid, midline.
-        b.Rect(0, 0, mid, h, HalfTint[0]);
-        b.Rect(mid, 0, mid, h, HalfTint[1]);
-        if (Art != null && Art.Background.IsValid)
-        {
-            const float tile = 192;
-            var bgTint = new Color4(0.42f, 0.42f, 0.5f, 1f);
-            for (float ty = 0; ty < h; ty += tile)
-                for (float tx = 0; tx < w; tx += tile)
-                    b.Sprite(Art.Background, tx + tile * 0.5f, ty + tile * 0.5f, tile, bgTint);
-            b.Rect(0, 0, mid, h, TeamColor[0].WithAlpha(0.06f));
-            b.Rect(mid, 0, mid, h, TeamColor[1].WithAlpha(0.06f));
-        }
-        var grid = new Color4(1, 1, 1, 0.025f);
-        for (float gx = 80; gx < w; gx += 80) if (Math.Abs(gx - mid) > 1) b.Rect(gx - 0.5f, 0, 1, h, grid);
-        for (float gy = 80; gy < h; gy += 80) b.Rect(0, gy - 0.5f, w, 1, grid);
-        b.Rect(mid - 6, 0, 12, h, new Color4(1, 1, 1, 0.04f));
-        b.Rect(mid - 1.5f, 0, 3, h, new Color4(0.9f, 0.9f, 1f, 0.45f));
+        // 1. Background: animated nebula per half, parallax stars, vignette, energy beam on the midline.
+        DrawBackground(b, w, h);
 
         // 2. Anti-spawn-kill zones: shown around Dodgers when an enemy cursor is close.
         for (int i = 0; i < s.PlayerCount; i++)
         {
             ref readonly var d = ref s.Players[i];
             if (!d.IsAliveDodger) continue;
-            float dx = Lerp(F(d.PrevPos.X), F(d.Pos.X), a), dy = Lerp(F(d.PrevPos.Y), F(d.Pos.Y), a);
+            float ai = Immediate[i] ? 1f : a;
+            float dx = Lerp(F(d.PrevPos.X), F(d.Pos.X), ai), dy = Lerp(F(d.PrevPos.Y), F(d.Pos.Y), ai);
             float zone = F(r.AntiSpawnRadius);
             float nearest = float.MaxValue;
             for (int g = 0; g < s.PlayerCount; g++)
@@ -225,7 +299,25 @@ public sealed class GameRenderer
             float x = (pool.PosX[i] + pool.VelX[i] * a) * inv;
             float y = (pool.PosY[i] + pool.VelY[i] * a) * inv;
             float rad = visualRadius[pool.Type[i]];
-            b.Add(x, y, rad, rad, pool.Half[i] == 0 ? c0 : c1, SpriteShape.Bullet);
+            var bc = pool.Half[i] == 0 ? c0 : c1;
+            if (pool.SpecialCount > 0 && (pool.Flags[i] & (byte)BulletFlags.Special) != 0)
+            {
+                if ((pool.Flags[i] & (byte)BulletFlags.Mine) != 0)
+                {
+                    // Mine: pulsing warning ring that speeds up as the fuse runs out.
+                    float fuse = pool.Timer[i];
+                    float blink = 0.5f + 0.5f * MathF.Sin((80f - fuse) * (0.25f + (80f - Math.Min(fuse, 80f)) * 0.01f));
+                    b.Circle(x, y, rad + 8 + 4 * blink, bc.WithAlpha(0.3f + 0.4f * blink), SpriteShape.Ring, 0.12f);
+                    b.Circle(x, y, rad + 14, bc.WithAlpha(0.18f), SpriteShape.Glow);
+                }
+                else
+                {
+                    // Homing: soft trailing glow while it is still steering.
+                    float tx = pool.VelX[i] * inv, ty = pool.VelY[i] * inv;
+                    b.Circle(x - tx * 3, y - ty * 3, rad + 5, bc.WithAlpha(0.35f), SpriteShape.Glow);
+                }
+            }
+            b.Add(x, y, rad, rad, bc, SpriteShape.Bullet);
         }
 
         // 5. Dodgers: Kenney ships facing the midline, thrusters, shield; the hitbox dot always on top.
@@ -236,7 +328,8 @@ public sealed class GameRenderer
             ref readonly var p = ref s.Players[i];
             if (!p.IsDodger) continue;
             int variant = Math.Min(1, variantCounter[p.Team]++);
-            float x = Lerp(F(p.PrevPos.X), F(p.Pos.X), a), y = Lerp(F(p.PrevPos.Y), F(p.Pos.Y), a);
+            float ai = Immediate[i] ? 1f : a;
+            float x = Lerp(F(p.PrevPos.X), F(p.Pos.X), ai), y = Lerp(F(p.PrevPos.Y), F(p.Pos.Y), ai);
             var c = TeamColor[p.Team];
             var ship = Art != null ? Art.Ship[p.Team, variant] : default;
             float facing = p.Team == 0 ? MathF.PI / 2 : -MathF.PI / 2; // nose toward the midline
@@ -264,7 +357,18 @@ public sealed class GameRenderer
                     float len = moving ? (p.Focus ? 12 : 18) : 8;
                     b.Sprite(fire, x + bx * (14 + len * 0.5f), y + by * (14 + len * 0.5f), len, White.WithAlpha(0.9f * bodyAlpha), rot);
                 }
-                b.Sprite(ship, x, y, 30, White.WithAlpha(bodyAlpha), rot);
+                // Flip: a full barrel roll (wingspan squashes through edge-on and back).
+                float roll = 1f;
+                if (p.FlipTicks > 0 && r.FlipTicks > 0)
+                {
+                    float prog = Math.Clamp((r.FlipTicks - p.FlipTicks + a) / r.FlipTicks, 0f, 1f);
+                    roll = MathF.Max(0.12f, MathF.Abs(MathF.Cos(prog * MathF.Tau)));
+                    // Afterimage trail behind the roll.
+                    float tx = F(p.PrevPos.X) - F(p.Pos.X), ty = F(p.PrevPos.Y) - F(p.Pos.Y);
+                    b.Sprite(ship, x + tx * 2.5f, y + ty * 2.5f, 30, c.WithAlpha(0.25f), rot, roll);
+                    b.Sprite(ship, x + tx * 5f, y + ty * 5f, 30, c.WithAlpha(0.12f), rot, roll);
+                }
+                b.Sprite(ship, x, y, 30, White.WithAlpha(bodyAlpha), rot, roll);
                 if (p.InvulnTicks > 0 && Art.Shield.IsValid)
                     b.Sprite(Art.Shield, x, y, 50, c.WithAlpha(0.55f + 0.25f * MathF.Sin(p.InvulnTicks * 0.4f)), facing);
             }
@@ -272,7 +376,19 @@ public sealed class GameRenderer
             {
                 b.Add(x, y, 13, 13, c.WithAlpha(bodyAlpha), SpriteShape.Diamond, 0.22f);
             }
-            if (p.Focus) b.Circle(x, y, 20, White.WithAlpha(0.55f), SpriteShape.Ring, 0.08f);
+            if (p.Focus && p.FlipTicks == 0) b.Circle(x, y, 20, White.WithAlpha(0.55f), SpriteShape.Ring, 0.08f);
+            if (p.FlipGuard)
+            {
+                float spin = 0.75f + 0.25f * MathF.Sin(_time * 30f);
+                b.Circle(x, y, 26, White.WithAlpha(0.18f * spin), SpriteShape.Glow);
+                b.Circle(x, y, 22, new Color4(1f, 0.95f, 0.75f, 0.85f * spin), SpriteShape.Ring, 0.1f);
+            }
+            if (DodgerSystem.IsBreakReady(in p, in r))
+            {
+                // Full Break bar: a pulsing team-coloured halo so both players can see it is armed.
+                float pulse = 0.5f + 0.5f * MathF.Sin(_time * 6f);
+                b.Circle(x, y, 30 + 4 * pulse, c.WithAlpha(0.35f + 0.35f * pulse), SpriteShape.Ring, 0.07f);
+            }
             if (p.InvulnTicks > 0) b.Circle(x, y, 24, White.WithAlpha(0.35f), SpriteShape.Arc, p.InvulnTicks / (float)r.InvulnTicks, 0.08f);
             float hb = MathF.Max(F(r.HitboxRadius), 2.5f);
             b.Circle(x, y, hb + 1.5f, new Color4(0, 0, 0, 0.9f), SpriteShape.Disc);
@@ -284,13 +400,22 @@ public sealed class GameRenderer
         {
             ref readonly var p = ref s.Players[i];
             if (!p.IsGunner) continue;
-            float x = Lerp(F(p.PrevCursor.X), F(p.Cursor.X), a), y = Lerp(F(p.PrevCursor.Y), F(p.Cursor.Y), a);
+            float ai = Immediate[i] ? 1f : a;
+            float x = Lerp(F(p.PrevCursor.X), F(p.Cursor.X), ai), y = Lerp(F(p.PrevCursor.Y), F(p.Cursor.Y), ai);
             bool blocked = GunnerSystem.IsTooCloseToDodger(s, p.Team, p.Cursor);
             bool rejectedRecently = p.LastRejectTick >= 0 && s.Tick - p.LastRejectTick < 12;
             var c = blocked || rejectedRecently ? new Color4(0.6f, 0.6f, 0.6f) : TeamColor[p.Team];
             b.Circle(x, y, 18, c.WithAlpha(0.85f), SpriteShape.Cross, 0.09f, 0.3f);
             b.Circle(x, y, 13, c.WithAlpha(0.6f), SpriteShape.Ring, 0.1f);
             if (blocked) b.Circle(x, y, 22, Danger.WithAlpha(0.8f), SpriteShape.Ring, 0.08f);
+            if (p.OverdriveTicks > 0)
+            {
+                // Overdrive: a hot gold aura and a spinning arc, visible to the enemy Dodgers.
+                float spin = (_time * 3f) % 1f;
+                b.Circle(x, y, 44, OverdriveColor.WithAlpha(0.28f), SpriteShape.Glow);
+                b.Circle(x, y, 28, OverdriveColor.WithAlpha(0.9f), SpriteShape.Arc, 0.25f + 0.1f * spin, 0.12f);
+                b.Circle(x, y, 32, OverdriveColor.WithAlpha(0.5f), SpriteShape.Ring, 0.05f);
+            }
             // Small team ship marker: shows who owns this reticle.
             if (Art != null) b.Sprite(Art.Ship[p.Team, 0], x + 22, y - 20, 13, White.WithAlpha(0.75f), p.Team == 0 ? MathF.PI / 2 : -MathF.PI / 2);
         }
@@ -309,6 +434,103 @@ public sealed class GameRenderer
             }
             float rad = fx.Shape == SpriteShape.Ring ? fx.Radius * (0.3f + 0.7f * t) : fx.Radius;
             b.Circle(fx.X, fx.Y, rad, fx.Color.WithAlpha(fx.Color.A * (1 - t)), fx.Shape, fx.Shape == SpriteShape.Cross ? 0.12f : 0.06f, fx.Shape == SpriteShape.Cross ? 0f : 0f);
+        }
+
+        // 8. Break flash over the half that was cleared.
+        if (_flash > 0)
+            b.Rect(_flashTeam == 0 ? 0 : mid, 0, mid, h, Color4.Lerp(White, TeamColor[_flashTeam], 0.4f).WithAlpha(0.35f * _flash * _flash));
+    }
+
+    /// <summary>The mouse pointer in arena units (the OS cursor is hidden during a mouse match).</summary>
+    public void DrawPointer(SpriteBatch b, float x, float y)
+    {
+        var c = new Color4(1f, 1f, 1f, 0.75f);
+        b.Circle(x, y, 9, new Color4(0, 0, 0, 0.5f), SpriteShape.Ring, 0.3f);
+        b.Circle(x, y, 8, c, SpriteShape.Ring, 0.16f);
+        b.Circle(x, y, 1.8f, c, SpriteShape.Disc);
+    }
+
+    // --- Background ---------------------------------------------------------------------------------
+
+    private const int StarCount = 240;
+    private static readonly float[] StarLayerSpeed = [4f, 9f, 18f]; // arena units per second, far -> near
+    private readonly float[] _starX = new float[StarCount], _starY = new float[StarCount];
+    private readonly float[] _starSize = new float[StarCount], _starPhase = new float[StarCount];
+    private readonly byte[] _starLayer = new byte[StarCount];
+    private float _time;
+
+    /// <summary>Real time in seconds, for background animation (render only).</summary>
+    public float Time => _time;
+
+    public GameRenderer()
+    {
+        var rng = new Random(7);
+        for (int i = 0; i < StarCount; i++)
+        {
+            // Most stars far away (small, slow); a few close (bigger, faster).
+            int layer = i < StarCount * 6 / 10 ? 0 : i < StarCount * 9 / 10 ? 1 : 2;
+            _starLayer[i] = (byte)layer;
+            _starX[i] = (float)rng.NextDouble();
+            _starY[i] = (float)rng.NextDouble();
+            _starSize[i] = layer switch { 0 => 0.6f + (float)rng.NextDouble() * 0.6f, 1 => 1.0f + (float)rng.NextDouble() * 0.8f, _ => 1.6f + (float)rng.NextDouble() * 1.2f };
+            _starPhase[i] = (float)rng.NextDouble() * MathF.Tau;
+        }
+    }
+
+    private void DrawBackground(SpriteBatch b, float w, float h)
+    {
+        float mid = w * 0.5f;
+        float t = _time;
+
+        // Nebula (procedural shader) per half; the old tiled texture is the fallback if shapes look wrong.
+        b.Add(mid * 0.5f, h * 0.5f, mid * 0.5f, h * 0.5f, new Color4(1f, 1f, 1f, 1f), SpriteShape.Nebula, t, 0f);
+        b.Add(mid * 1.5f, h * 0.5f, mid * 0.5f, h * 0.5f, new Color4(1f, 1f, 1f, 1f), SpriteShape.Nebula, t, 1f);
+
+        // Parallax starfield drifting down; each star twinkles on its own phase.
+        for (int i = 0; i < StarCount; i++)
+        {
+            int layer = _starLayer[i];
+            float y = (_starY[i] * h + t * StarLayerSpeed[layer]) % h;
+            float x = _starX[i] * w;
+            float tw = 0.55f + 0.45f * MathF.Sin(t * (1.3f + layer * 0.7f) + _starPhase[i]);
+            float size = _starSize[i];
+            var tint = x < mid ? new Color4(0.80f, 0.90f, 1f) : new Color4(1f, 0.85f, 0.90f);
+            if (layer == 2)
+            {
+                b.Circle(x, y, size * 4.5f, tint.WithAlpha(0.18f * tw), SpriteShape.Glow);
+                if (Art != null && Art.Stars[i % 3].IsValid && i % 4 == 0)
+                    b.Sprite(Art.Stars[i % 3], x, y, size * 5f, tint.WithAlpha(0.55f * tw), t * 0.3f + _starPhase[i]);
+                else
+                    b.Circle(x, y, size, tint.WithAlpha(0.95f * tw), SpriteShape.Disc);
+            }
+            else
+            {
+                b.Circle(x, y, size, tint.WithAlpha((layer == 0 ? 0.45f : 0.75f) * tw), SpriteShape.Disc);
+            }
+        }
+
+        // Faint grid, so movement still reads against the background.
+        var grid = new Color4(1, 1, 1, 0.018f);
+        for (float gx = 80; gx < w; gx += 80) if (Math.Abs(gx - mid) > 1) b.Rect(gx - 0.5f, 0, 1, h, grid);
+        for (float gy = 80; gy < h; gy += 80) b.Rect(0, gy - 0.5f, w, 1, grid);
+
+        // Vignette: darker corners pull the eye to the action.
+        b.Add(w * 0.5f, h * 0.5f, w * 0.5f, h * 0.5f, new Color4(0f, 0f, 0.01f, 0.75f), SpriteShape.Vignette);
+
+        // Midline energy beam: soft glow, team-tinted edges, bright core, pulses running along it.
+        float breathe = 0.85f + 0.15f * MathF.Sin(t * 2.1f);
+        b.Rect(mid - 22, 0, 22, h, TeamColor[0].WithAlpha(0.035f * breathe));
+        b.Rect(mid, 0, 22, h, TeamColor[1].WithAlpha(0.035f * breathe));
+        b.Rect(mid - 8, 0, 16, h, new Color4(0.8f, 0.85f, 1f, 0.06f * breathe));
+        b.Rect(mid - 3, 0, 6, h, new Color4(0.85f, 0.9f, 1f, 0.16f * breathe));
+        b.Rect(mid - 1f, 0, 2, h, new Color4(0.95f, 0.97f, 1f, 0.75f));
+        for (int k = 0; k < 6; k++)
+        {
+            float dir = k % 2 == 0 ? 1f : -1f;
+            float py = ((k * 0.37f + t * 0.22f) % 1f) * (h + 120) - 60;
+            if (dir < 0) py = h - py;
+            b.Add(mid, py, 9, 46, new Color4(0.85f, 0.92f, 1f, 0.35f), SpriteShape.Glow);
+            b.Add(mid, py, 2.2f, 18, White.WithAlpha(0.8f), SpriteShape.Glow);
         }
     }
 
@@ -333,7 +555,18 @@ public sealed class GameRenderer
         }
         else if (s.Phase == MatchPhase.Playing && s.RoundTick >= r.SuddenDeathTicks)
         {
-            Text(dl, "SUDDEN DEATH: ENERGY x" + r.SuddenDeathRegenMultiplier, cx, 58, 14, Danger, center: true);
+            if (_suddenDeathMult != r.SuddenDeathRegenMultiplier)
+            {
+                _suddenDeathMult = r.SuddenDeathRegenMultiplier;
+                _suddenDeathText = "SUDDEN DEATH: ENERGY x" + _suddenDeathMult;
+            }
+            Text(dl, _suddenDeathText, cx, 58, 14, Danger, center: true);
+        }
+        else if (s.Phase == MatchPhase.Playing)
+        {
+            // Symmetric rounds (2v2+): count down to sudden death.
+            int secs = (r.SuddenDeathTicks - s.RoundTick + MatchRules.TicksPerSecond - 1) / MatchRules.TicksPerSecond;
+            if (secs <= 30) Text(dl, $"SUDDEN DEATH IN {secs}s", cx, 58, 14, new Color4(1f, 0.75f, 0.4f), center: true);
         }
 
         // Team panels.
@@ -342,30 +575,34 @@ public sealed class GameRenderer
             float x0 = team == 0 ? 14 : windowW - 14 - TeamPanelWidth;
             float y = 8;
             Text(dl, TeamName[team], x0, y, 15, TeamColor[team]);
-            for (int i = 0; i < s.PlayerCount; i++)
-                if (s.Players[i].Active && s.Players[i].Team == team && PlayerTags[i] is { } tag)
-                    Text(dl, tag, x0 + 70, y + 2, 12, new Color4(1f, 0.85f, 0.35f));
+            if (TeamTags[team] is { } teamTag) Text(dl, teamTag, x0 + 70, y + 2, 12, new Color4(1f, 0.85f, 0.35f));
             y += 20;
             for (int i = 0; i < s.PlayerCount; i++)
             {
                 ref readonly var p = ref s.Players[i];
                 if (!p.Active || p.Team != team) continue;
                 DrawPlayerRow(dl, s, i, x0, y);
-                y += 24;
+                y += HudRowHeight;
             }
         }
 
         // Bottom: control hints per player.
         float by = windowH - HudBottom + 7;
+        bool hintLeft = false, hintRight = false;
         for (int i = 0; i < s.PlayerCount && i < ControlHints.Length; i++)
         {
             ref readonly var p = ref s.Players[i];
-            if (ControlHints[i] == null) continue; // bots have no controls to show
+            if (ControlHints[i] == null || !ShowControlHints) continue; // bots have no controls to show
             string text = HintText(i, p.Role);
             bool left = p.Team == 0;
+            if (left) hintLeft = true; else hintRight = true;
             Text(dl, text, left ? 14 : windowW - 14, by, 14, TeamColor[p.Team].Scale(0.85f), center: false, rightAlign: !left);
         }
-        Text(dl, "F1 debug · Esc menu", cx, by, 13, new Color4(0.45f, 0.47f, 0.52f), center: true);
+        // Keep the debug hint out of the way of long control hints: use a free side when there is one.
+        var dim = new Color4(0.45f, 0.47f, 0.52f);
+        if (!hintRight) Text(dl, "F1 debug · Esc menu", windowW - 14, by, 13, dim, rightAlign: true);
+        else if (!hintLeft) Text(dl, "F1 debug · Esc menu", 14, by, 13, dim);
+        else Text(dl, "F1 debug · Esc menu", cx, by, 13, dim, center: true);
 
         // Player labels above Dodgers (tells teammates apart in 2v2+).
         for (int i = 0; i < s.PlayerCount; i++)
@@ -373,12 +610,14 @@ public sealed class GameRenderer
             ref readonly var p = ref s.Players[i];
             if (!p.IsDodger || p.Lives <= 0) continue;
             float a = s.Phase == MatchPhase.Playing ? alpha : 0f;
-            float x = ui.ToPixelX(Lerp(F(p.PrevPos.X), F(p.Pos.X), a));
-            float y = ui.ToPixelY(Lerp(F(p.PrevPos.Y), F(p.Pos.Y), a));
-            Text(fg, PlayerTags[i] != null ? "BOT" : PlayerLabels[i], x, y - 36 * ui.Scale, 13, TeamColor[p.Team].WithAlpha(0.8f), center: true);
+            float ai = Immediate[i] ? 1f : a;
+            float x = ui.ToPixelX(Lerp(F(p.PrevPos.X), F(p.Pos.X), ai));
+            float y = ui.ToPixelY(Lerp(F(p.PrevPos.Y), F(p.Pos.Y), ai));
+            if (i == YouSlot) Text(fg, "YOU", x, y - 36 * ui.Scale, 14, YouColor, center: true);
+            else Text(fg, PlayerTags[i] != null ? "BOT" : PlayerLabels[i], x, y - 36 * ui.Scale, 13, TeamColor[p.Team].WithAlpha(0.8f), center: true);
         }
 
-        DrawBanner(fg, s, ui);
+        if (ShowBanners || s.Phase != MatchPhase.MatchOver) DrawBanner(fg, s, ui);
     }
 
     private void DrawPlayerRow(ImDrawListPtr dl, SimState s, int index, float x, float y)
@@ -386,7 +625,8 @@ public sealed class GameRenderer
         ref readonly var p = ref s.Players[index];
         ref readonly var r = ref s.Rules;
         var c = TeamColor[p.Team];
-        Text(dl, $"P{index + 1}", x, y + 1, 15, c);
+        if (index == YouSlot) Rect(dl, x - 6, y + 2, 3, 16, YouColor);
+        Text(dl, PlayerLabels[index], x, y + 1, 15, index == YouSlot ? YouColor : c);
         if (p.Role == PlayerRole.Dodger)
         {
             Text(dl, "DODGER", x + 30, y + 3, 12, new Color4(0.7f, 0.72f, 0.78f));
@@ -410,7 +650,22 @@ public sealed class GameRenderer
                     ImDrawListExtensions.AddCircle(dl, in center, 7, Col(new Color4(0, 0, 0, 0.8f)), 16, 1.5f);
                 }
             }
-            Text(dl, $"graze {p.Grazes}", x + 100 + r.DodgerLives * 20 + 6, y + 3, 12, new Color4(0.6f, 0.62f, 0.68f));
+            // Break bar (filled by grazing) and the Flip cooldown pip.
+            float bx = x + 100 + r.DodgerLives * 20 + 4, bw = 110, bh = 12;
+            float fill = Math.Clamp(F(p.Break) / Math.Max(1f, F(r.BreakMax)), 0, 1);
+            bool ready = fill >= 1f;
+            float pulse = ready ? 0.5f + 0.5f * MathF.Sin(_time * 8f) : 0f;
+            Rect(dl, bx, y + 4, bw, bh, new Color4(0.12f, 0.12f, 0.16f));
+            Rect(dl, bx, y + 4, bw * fill, bh, ready ? Color4.Lerp(c, White, 0.35f * pulse) : c.Scale(0.75f));
+            Text(dl, ready ? "BREAK READY" : "BREAK", bx + bw * 0.5f, y + 4, 10.5f,
+                ready ? new Color4(0.05f, 0.05f, 0.08f) : new Color4(0.85f, 0.85f, 0.9f), center: true);
+            float fx = bx + bw + 16, fy = y + 10;
+            float flipReady = r.FlipCooldownTicks > 0 ? 1f - p.FlipCooldown / (float)r.FlipCooldownTicks : 1f;
+            var fc = new float2(fx, fy);
+            ImDrawListExtensions.AddCircleFilled(dl, in fc, 7, Col(new Color4(0.12f, 0.12f, 0.16f)), 16);
+            if (flipReady >= 1f) ImDrawListExtensions.AddCircleFilled(dl, in fc, 7, Col(new Color4(1f, 0.95f, 0.75f)), 16);
+            else ImDrawListExtensions.AddCircleFilled(dl, in fc, 7 * flipReady, Col(new Color4(0.6f, 0.6f, 0.65f)), 16);
+            Text(dl, "FLIP", fx + 11, y + 4, 10.5f, flipReady >= 1f ? new Color4(1f, 0.95f, 0.75f) : new Color4(0.5f, 0.5f, 0.55f));
         }
         else
         {
@@ -419,17 +674,36 @@ public sealed class GameRenderer
             float bx = x + 92, bw = 120, bh = 12;
             float fill = Math.Clamp(F(p.Energy) / Math.Max(1f, F(r.EnergyMax)), 0, 1);
             Rect(dl, bx, y + 4, bw, bh, new Color4(0.12f, 0.12f, 0.16f));
-            Rect(dl, bx, y + 4, bw * fill, bh, c.Scale(0.9f));
+            bool odActive = p.OverdriveTicks > 0;
+            Rect(dl, bx, y + 4, bw * fill, bh, odActive ? Color4.Lerp(c, OverdriveColor, 0.6f + 0.2f * MathF.Sin(_time * 12f)) : c.Scale(0.9f));
+            // Overdrive meter: a thin gold strip under the energy bar (drains while active).
+            float od = odActive
+                ? p.OverdriveTicks / (float)Math.Max(1, r.OverdriveTicks)
+                : Math.Clamp(F(p.Overdrive) / Math.Max(1f, F(r.OverdriveMax)), 0, 1);
+            bool odReady = !odActive && od >= 1f;
+            Rect(dl, bx, y + 17, bw, 3, new Color4(0.12f, 0.12f, 0.16f));
+            Rect(dl, bx, y + 17, bw * od, 3, odReady ? Color4.Lerp(OverdriveColor, White, 0.5f + 0.5f * MathF.Sin(_time * 8f)) : OverdriveColor.WithAlpha(0.85f));
+            if (odReady)
+            {
+                Text(dl, "OVERDRIVE", bx + bw * 0.5f + 1, y + 5, 10.5f, new Color4(0, 0, 0, 0.8f), center: true);
+                Text(dl, "OVERDRIVE", bx + bw * 0.5f, y + 4, 10.5f, Color4.Lerp(OverdriveColor, White, 0.3f + 0.3f * MathF.Sin(_time * 8f)), center: true);
+            }
             Text(dl, $"{(int)F(p.Energy)}", bx + bw + 6, y + 3, 12, new Color4(0.8f, 0.8f, 0.85f));
             // Pattern slots: dark = cooling down, dim = not enough energy, bright = ready.
             float sx = bx + bw + 34;
             for (int k = 0; k < MatchRules.PatternSlots; k++)
             {
-                ref readonly var def = ref r.Patterns[k];
+                ref readonly var def = ref r.DefFor(in p, k);
                 float cd = def.CooldownTicks > 0 ? p.Cooldowns[k] / (float)def.CooldownTicks : 0;
                 bool affordable = p.Energy >= def.Cost;
                 var sc = cd > 0 ? new Color4(0.2f, 0.2f, 0.25f) : affordable ? c : c.Scale(0.4f);
                 float w = 46;
+                if (SelectedPattern[index] == k)
+                {
+                    // Mouse Gunner: the pattern a left click will place (wheel changes it).
+                    float glow = 0.75f + 0.25f * MathF.Sin(_time * 7f);
+                    Rect(dl, sx - 2, y, w + 4, 22, new Color4(1f, 0.95f, 0.6f, glow));
+                }
                 Rect(dl, sx, y + 2, w, 18, new Color4(0.08f, 0.08f, 0.1f));
                 Rect(dl, sx, y + 2, w * (1 - cd), 18, sc.WithAlpha(cd > 0 ? 0.6f : 0.85f));
                 Text(dl, PatternNames[(int)def.Kind], sx + w * 0.5f, y + 5, 10.5f, affordable && cd <= 0 ? new Color4(0.05f, 0.05f, 0.08f) : new Color4(0.85f, 0.85f, 0.9f), center: true);
@@ -485,8 +759,12 @@ public sealed class GameRenderer
         if (cached != null) return cached;
         var h = ControlHints[player]!;
         cached = role == PlayerRole.Dodger
-            ? $"P{player + 1} Dodger: {h[0]} move · {h[1]} focus"
-            : $"P{player + 1} Gunner: {h[0]} aim · {h[2]} patterns";
+            ? h.Length >= 6
+                ? $"P{player + 1} Dodger: {h[0]} move · {h[1]} focus · {h[4]} flip · {h[5]} break"
+                : $"P{player + 1} Dodger: {h[0]} move · {h[1]} focus"
+            : h.Length >= 6
+                ? $"P{player + 1} Gunner: {h[0]} aim · {h[2]} patterns · {h[5]} overdrive"
+                : $"P{player + 1} Gunner: {h[0]} aim · {h[2]} patterns";
         return cached;
     }
 
@@ -524,7 +802,7 @@ public sealed class GameRenderer
     private ImFontPtr HudFont => Art?.Font ?? ImGui.GetFont();
 
     /// <summary>Draws text with the HUD font (used by the title menu).</summary>
-    public void Label(ImDrawListPtr dl, ImString text, float x, float y, float size, Color4 c, bool center = false) => Text(dl, text, x, y, size, c, center);
+    public void Label(ImDrawListPtr dl, ImString text, float x, float y, float size, Color4 c, bool center = false, bool rightAlign = false) => Text(dl, text, x, y, size, c, center, rightAlign);
 
     private void Text(ImDrawListPtr dl, ImString text, float x, float y, float size, Color4 c, bool center = false, bool rightAlign = false)
     {

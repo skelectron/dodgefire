@@ -50,6 +50,10 @@ public static class MatchFlow
                 p.InvulnTicks = 0;
                 p.Grazes = 0;
                 p.Focus = false;
+                p.FlipTicks = 0;
+                p.FlipCooldown = 0;
+                p.FlipGuard = false;
+                p.Break = Fix.Zero;
                 p.LastRejectTick = -1;
                 for (int k = 0; k < MatchRules.PatternSlots; k++) p.Cooldowns[k] = 0;
                 if (p.Role == PlayerRole.Dodger)
@@ -62,6 +66,8 @@ public static class MatchFlow
                 {
                     p.Lives = 0;
                     p.Energy = r.EnergyStart;
+                p.Overdrive = Fix.Zero;
+                p.OverdriveTicks = 0;
                     // Start near the midline (well away from the enemy Dodgers spawning mid-half).
                     Fix inset = Fix.FromInt(70);
                     Fix cx = team == 0 ? enemyMin + inset : enemyMax - inset;

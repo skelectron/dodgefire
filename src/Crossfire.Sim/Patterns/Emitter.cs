@@ -4,7 +4,8 @@ namespace Crossfire.Sim.Patterns;
 public struct Emitter
 {
     public bool Active;
-    public byte PatternSlot;
+    /// <summary>Which pattern this is (index into <see cref="Rules.MatchRules.Patterns"/>).</summary>
+    public PatternKind Kind;
     public byte Owner;
     /// <summary>The team whose half this emitter is in (the team its bullets can hit).</summary>
     public byte Half;

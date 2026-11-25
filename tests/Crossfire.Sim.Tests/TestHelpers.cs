@@ -40,6 +40,8 @@ internal static class TestHelpers
                 int r = _rng.NextInt(24);
                 if (r < 4) b |= (InputButtons)((int)InputButtons.Pattern1 << r);
                 if (_rng.NextInt(200) == 0) b |= InputButtons.Start;
+                if (_rng.NextInt(40) == 0) b |= InputButtons.Flip;
+                if (_rng.NextInt(60) == 0) b |= InputButtons.Super;
                 inputs[i] = new SimInput(mx, my, b);
             }
         }

@@ -1,0 +1,26 @@
+Kenney (www.kenney.nl) audio, CC0. Files renamed for the game:
+place.ogg <- sci-fi-sounds\audio\forcefield_000.ogg
+fire_small.ogg <- sci-fi-sounds\audio\lasersmall_000.ogg
+fire_small2.ogg <- sci-fi-sounds\audio\lasersmall_003.ogg
+fire_large.ogg <- sci-fi-sounds\audio\laserlarge_001.ogg
+fire_sweep.ogg <- sci-fi-sounds\audio\laserretro_002.ogg
+fire_homing.ogg <- digital-audio\audio\phaserup3.ogg
+fire_mines.ogg <- digital-audio\audio\zap2.ogg
+mine_burst.ogg <- sci-fi-sounds\audio\explosioncrunch_003.ogg
+rejected.ogg <- interface-sounds\audio\error_004.ogg
+graze.ogg <- interface-sounds\audio\tick_002.ogg
+flip.ogg <- sci-fi-sounds\audio\thrusterfire_001.ogg
+flip_block.ogg <- sci-fi-sounds\audio\impactmetal_002.ogg
+break.ogg <- sci-fi-sounds\audio\lowfrequency_explosion_000.ogg
+break_field.ogg <- sci-fi-sounds\audio\forcefield_003.ogg
+overdrive.ogg <- digital-audio\audio\powerup5.ogg
+hit.ogg <- sci-fi-sounds\audio\explosioncrunch_001.ogg
+death.ogg <- sci-fi-sounds\audio\lowfrequency_explosion_001.ogg
+round_start.ogg <- digital-audio\audio\zapthreetoneup.ogg
+round_end.ogg <- music-jingles\audio-retro\jingles-retro_03.ogg
+match_end.ogg <- music-jingles\audio-hit\jingles-hit_05.ogg
+ui_move.ogg <- ui-audio\audio\rollover2.ogg
+ui_confirm.ogg <- ui-audio\audio\click3.ogg
+ui_back.ogg <- interface-sounds\audio\back_002.ogg
+music_menu.ogg <- music-loops\loops\space-cadet.ogg
+music_match.ogg <- music-loops\loops\alpha-dance.ogg

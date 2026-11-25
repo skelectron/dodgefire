@@ -1,5 +1,6 @@
 using Crossfire.Sim.Bullets;
 using Crossfire.Sim.Patterns;
+using Crossfire.Sim.Players;
 
 namespace Crossfire.Sim.Collision;
 
@@ -22,6 +23,10 @@ public static unsafe class BulletCollision
         Span<int> targets = stackalloc int[SimState.MaxPlayers];
         Span<int> targetHalf = stackalloc int[SimState.MaxPlayers];
         Span<bool> hit = stackalloc bool[SimState.MaxPlayers];
+        // Index of the bullet that touched each target's hitbox (absorbed if the target is flipping).
+        Span<int> hitBullet = stackalloc int[SimState.MaxPlayers];
+        // Owner of that bullet, captured now: flip blocks below swap-remove bullets and may move it.
+        Span<int> hitOwner = stackalloc int[SimState.MaxPlayers];
         int targetCount = 0;
         for (int i = 0; i < s.PlayerCount; i++)
         {
@@ -65,6 +70,8 @@ public static unsafe class BulletCollision
                 if (d2 <= hitDist * hitDist)
                 {
                     hit[t] = true;
+                    hitBullet[t] = i;
+                    hitOwner[t] = pool.Owner[i];
                     break;
                 }
                 if ((flags[i] & (byte)BulletFlags.Grazed) == 0 && d2 <= (long)reach * reach)
@@ -76,23 +83,57 @@ public static unsafe class BulletCollision
 
             if (grazeCount > 0)
             {
-                s.Players[pi].Grazes += grazeCount;
-                s.PushEvent(SimEventType.Graze, pi, h, s.Players[pi].Pos);
+                ref var gp = ref s.Players[pi];
+                gp.Grazes += grazeCount;
+                gp.Break = Fix.Min(rules.BreakMax, gp.Break + rules.BreakPerGraze * grazeCount);
+                s.PushEvent(SimEventType.Graze, pi, h, gp.Pos, grazeCount);
             }
+        }
+
+        // Flip blocks first: each flipping target absorbs the bullet that touched it. Removing by
+        // descending index keeps the other recorded indices valid (swap-remove only moves the tail).
+        for (int pass = 0; pass < targetCount; pass++)
+        {
+            int best = -1;
+            for (int t = 0; t < targetCount; t++)
+                if (hit[t] && s.Players[targets[t]].FlipGuard && (best < 0 || hitBullet[t] > hitBullet[best])) best = t;
+            if (best < 0) break;
+            ref var p = ref s.Players[targets[best]];
+            p.FlipGuard = false;
+            hit[best] = false;
+            pool.RemoveAt(hitBullet[best]);
+            // A teammate touching the very same bullet is spared too: the bullet is gone.
+            for (int t = 0; t < targetCount; t++)
+                if (hit[t] && hitBullet[t] == hitBullet[best]) hit[t] = false;
+            s.PushEvent(SimEventType.FlipBlock, targets[best], p.Team, p.Pos);
         }
 
         for (int t = 0; t < targetCount; t++)
         {
-            if (hit[t]) ApplyHit(s, targets[t]);
+            if (hit[t]) ApplyHit(s, targets[t], hitOwner[t]);
         }
     }
 
-    private static void ApplyHit(SimState s, int playerIndex)
+    /// <summary>Removes every bullet in one half.</summary>
+    public static void ClearHalf(SimState s, int half)
+    {
+        var pool = s.Bullets;
+        int i = 0;
+        while (i < pool.Count)
+        {
+            if (pool.Half[i] == half) pool.RemoveAt(i);
+            else i++;
+        }
+    }
+
+    private static void ApplyHit(SimState s, int playerIndex, int owner)
     {
         ref var p = ref s.Players[playerIndex];
+        p.Break = Fix.Max(Fix.Zero, p.Break - s.Rules.BreakHitPenalty);
         p.Lives--;
         p.InvulnTicks = s.Rules.InvulnTicks;
-        s.PushEvent(p.Lives > 0 ? SimEventType.Hit : SimEventType.Death, playerIndex, p.Team, p.Pos);
+        s.PushEvent(p.Lives > 0 ? SimEventType.Hit : SimEventType.Death, playerIndex, p.Team, p.Pos, owner);
+        GunnerSystem.CreditKill(s, owner);
         ClearBulletsNear(s, p.Team, p.Pos, s.Rules.HitClearRadius);
     }
 

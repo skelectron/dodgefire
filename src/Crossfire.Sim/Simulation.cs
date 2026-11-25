@@ -56,6 +56,7 @@ public sealed class Simulation : IDisposable
                 // 4. Bullets move and despawn outside their half.
                 if (_mover != null) _mover.Move(s.Bullets);
                 else BulletSystem.MoveRange(s.Bullets, 0, s.Bullets.Count);
+                Patterns.PatternLibrary.UpdateSpecialBullets(s);
                 BulletSystem.Despawn(s.Bullets, in s.Rules);
                 // 5. Collision + graze.
                 BulletCollision.Run(s);

@@ -37,6 +37,10 @@ internal sealed class DebugUi(string deviceName, bool validation)
     public bool Visible { get; set; }
     public bool Paused { get; private set; }
     public bool GodMode { get; set; }
+    /// <summary>Audio volumes are tuned from the panel when sound is available.</summary>
+    public Crossfire.Audio.AudioSystem? Audio { get; set; }
+    /// <summary>Set when the panel edited the state outside of inputs (stress spawn): the replay becomes invalid.</summary>
+    public bool Tampered { get; set; }
     public MatchRules Rules { get; private set; } = MatchRules.Default;
 
     public bool ConsumeSingleStep()
@@ -114,7 +118,7 @@ internal sealed class DebugUi(string deviceName, bool validation)
                 restart = true;
             }
 
-            // Per-slot controller: click to cycle Keyboard L -> Keyboard R -> Bot Easy/Normal/Hard.
+            // Per-slot controller: click to cycle Mouse -> Keyboard L -> Keyboard R -> Bot Easy/Normal/Hard.
             for (int i = 0; i < controllers.Length; i++)
             {
                 ImGui.PushID(100 + i);
@@ -124,9 +128,14 @@ internal sealed class DebugUi(string deviceName, bool validation)
                     if (!c.IsBot)
                     {
                         if (c.Kind == ControllerKind.KeyboardRight) c.SetBot(BotDifficulty.Easy);
-                        else c.SetKind(c.Kind == ControllerKind.KeyboardLeft ? ControllerKind.KeyboardRight : ControllerKind.KeyboardLeft);
+                        else c.SetKind(c.Kind switch
+                        {
+                            ControllerKind.Mouse => ControllerKind.KeyboardLeft,
+                            ControllerKind.KeyboardLeft => ControllerKind.KeyboardRight,
+                            _ => ControllerKind.Mouse,
+                        });
                     }
-                    else if (c.Difficulty == BotDifficulty.Hard) c.SetKind(ControllerKind.KeyboardLeft);
+                    else if (c.Difficulty == BotDifficulty.Hard) c.SetKind(ControllerKind.Mouse);
                     else c.SetBot(c.Difficulty + 1);
                     controllersChanged = true;
                 }
@@ -134,7 +143,7 @@ internal sealed class DebugUi(string deviceName, bool validation)
                 if (i % 2 == 0 && i + 1 < controllers.Length) ImGui.SameLine(0, -1);
             }
 
-            if (ImGui.Button("spawn 20k bullets", default)) SpawnStressBullets(s, 20_000);
+            if (ImGui.Button("spawn 20k bullets", default)) { SpawnStressBullets(s, 20_000); Tampered = true; }
             ImGui.SameLine(0, -1);
             if (ImGui.Button("clear bullets", default)) s.Bullets.Clear();
             ImGui.SliderInt("static sprite stress", ref _spriteStress, 0, 100_000, "%d", ImGuiSliderFlags.None);
@@ -151,6 +160,16 @@ internal sealed class DebugUi(string deviceName, bool validation)
             }
         }
 
+        if (Audio is { Enabled: true } audio && ImGui.CollapsingHeader("Audio", ImGuiTreeNodeFlags.None))
+        {
+            float master = audio.MasterVolume, music = audio.MusicVolume, sfx = audio.SfxVolume;
+            bool muted = audio.Muted;
+            if (ImGui.SliderFloat("master", ref master, 0, 1, "%.2f", ImGuiSliderFlags.None)) audio.MasterVolume = master;
+            if (ImGui.SliderFloat("music", ref music, 0, 1, "%.2f", ImGuiSliderFlags.None)) audio.MusicVolume = music;
+            if (ImGui.SliderFloat("effects", ref sfx, 0, 1, "%.2f", ImGuiSliderFlags.None)) audio.SfxVolume = sfx;
+            if (ImGui.Checkbox("mute (M)", ref muted)) audio.Muted = muted;
+        }
+
         if (ImGui.CollapsingHeader("Tuning (applies live)", ImGuiTreeNodeFlags.None))
         {
             ref var r = ref s.Rules;
@@ -160,6 +179,12 @@ internal sealed class DebugUi(string deviceName, bool validation)
             FixSlider("graze radius", ref r.GrazeRadius, 5, 40);
             TickSlider("invulnerability (s)", ref r.InvulnTicks, 0, 5);
             FixSlider("hit clear radius", ref r.HitClearRadius, 0, 300);
+            ImGui.SliderInt("flip length (ticks)", ref r.FlipTicks, 1, 60, "%d", ImGuiSliderFlags.None);
+            TickSlider("flip cooldown (s)", ref r.FlipCooldownTicks, 0, 10);
+            FixSlider("flip speed x", ref r.FlipSpeedMultiplier, 1, 3);
+            FixSlider("break per graze", ref r.BreakPerGraze, 0, 20);
+            FixSlider("break hit penalty", ref r.BreakHitPenalty, 0, 100);
+            ImGui.SliderInt("break invuln (ticks)", ref r.BreakInvulnTicks, 0, 180, "%d", ImGuiSliderFlags.None);
             FixSlider("cursor speed", ref r.CursorSpeed, 2, 20);
             FixPerSecondSlider("energy regen / s", ref r.EnergyRegenPerTick, 1, 50);
             FixSlider("anti-spawn radius", ref r.AntiSpawnRadius, 0, 300);
@@ -168,7 +193,7 @@ internal sealed class DebugUi(string deviceName, bool validation)
             ImGui.SliderInt("rounds to win", ref r.RoundsToWin, 1, 5, "%d", ImGuiSliderFlags.None);
             ImGui.Checkbox("swap roles each round", ref r.SwapRolesEachRound);
 
-            for (int k = 0; k < MatchRules.PatternSlots; k++)
+            for (int k = 0; k < MatchRules.PatternKinds; k++)
             {
                 ref var def = ref r.Patterns[k];
                 if (!ImGui.CollapsingHeader($"pattern {k + 1}: {def.Kind}", ImGuiTreeNodeFlags.None)) continue;
