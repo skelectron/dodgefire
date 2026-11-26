@@ -23,10 +23,11 @@ public sealed unsafe class TextureAtlas : IDisposable
     private readonly VulkanContext _vk;
     private readonly Dictionary<string, SpriteRegion> _regions = new(StringComparer.OrdinalIgnoreCase);
 
-    public VkImage Image { get; }
-    public VkDeviceMemory Memory { get; }
-    public VkImageView View { get; }
-    public VkSampler Sampler { get; }
+    private readonly GpuTexture _texture;
+    public VkImage Image => _texture.Image;
+    public VkDeviceMemory Memory => _texture.Memory;
+    public VkImageView View => _texture.View;
+    public VkSampler Sampler => _texture.Sampler;
     public VkDescriptorSetLayout SetLayout { get; }
     public VkDescriptorPool Pool { get; }
     public VkDescriptorSet Set { get; }
@@ -75,72 +76,8 @@ public sealed unsafe class TextureAtlas : IDisposable
         }
 
         // --- GPU image -------------------------------------------------------------------------
+        _texture = new GpuTexture(vk, pixels, Size, Size);
         var device = vk.Device;
-        Image = device.CreateImage(new VkImageCreateInfo
-        {
-            ImageType = VkImageType._2D,
-            Format = VkFormat.R8G8B8A8UNorm,
-            Extent = new VkExtent3D(Size, Size, 1),
-            MipLevels = 1,
-            ArrayLayers = 1,
-            Samples = VkSampleCountFlags._1Bit,
-            Tiling = VkImageTiling.Optimal,
-            Usage = VkImageUsageFlags.SampledBit | VkImageUsageFlags.TransferDstBit,
-            SharingMode = VkSharingMode.Exclusive,
-            InitialLayout = VkImageLayout.Undefined,
-        }, null);
-        Memory = DeviceExtensions.AllocateMemory(device, vk.PhysicalDevice, Image, VkMemoryPropertyFlags.DeviceLocalBit, null);
-        device.BindImageMemory(Image, Memory, default);
-
-        // --- Upload via staging buffer ----------------------------------------------------------
-        var (staging, stagingMem, mapped) = vk.CreateMappedBuffer(pixels.Length, VkBufferUsageFlags.TransferSrcBit);
-        pixels.AsSpan().CopyTo(new Span<byte>((void*)mapped, pixels.Length));
-        var image = Image;
-        vk.ImmediateSubmit(cmd =>
-        {
-            var range = new VkImageSubresourceRange { AspectMask = VkImageAspectFlags.ColorBit, LevelCount = 1, LayerCount = 1 };
-            var toTransfer = new VkImageMemoryBarrier
-            {
-                SrcAccessMask = default,
-                DstAccessMask = VkAccessFlags.TransferWriteBit,
-                OldLayout = VkImageLayout.Undefined,
-                NewLayout = VkImageLayout.TransferDstOptimal,
-                SrcQueueFamilyIndex = VK.QUEUE_FAMILY_IGNORED,
-                DstQueueFamilyIndex = VK.QUEUE_FAMILY_IGNORED,
-                Image = image,
-                SubresourceRange = range,
-            };
-            cmd.PipelineBarrier(VkPipelineStageFlags.TopOfPipeBit, VkPipelineStageFlags.TransferBit, default,
-                ReadOnlySpan<VkMemoryBarrier>.Empty, ReadOnlySpan<VkBufferMemoryBarrier>.Empty, new ReadOnlySpan<VkImageMemoryBarrier>(&toTransfer, 1));
-
-            var copy = new VkBufferImageCopy
-            {
-                ImageSubresource = new VkImageSubresourceLayers { AspectMask = VkImageAspectFlags.ColorBit, LayerCount = 1 },
-                ImageExtent = new VkExtent3D(Size, Size, 1),
-            };
-            cmd.CopyBufferToImage(staging, image, VkImageLayout.TransferDstOptimal, new ReadOnlySpan<VkBufferImageCopy>(&copy, 1));
-
-            var toShader = toTransfer with
-            {
-                SrcAccessMask = VkAccessFlags.TransferWriteBit,
-                DstAccessMask = VkAccessFlags.ShaderReadBit,
-                OldLayout = VkImageLayout.TransferDstOptimal,
-                NewLayout = VkImageLayout.ShaderReadOnlyOptimal,
-            };
-            cmd.PipelineBarrier(VkPipelineStageFlags.TransferBit, VkPipelineStageFlags.FragmentShaderBit, default,
-                ReadOnlySpan<VkMemoryBarrier>.Empty, ReadOnlySpan<VkBufferMemoryBarrier>.Empty, new ReadOnlySpan<VkImageMemoryBarrier>(&toShader, 1));
-        });
-        vk.DestroyBuffer(staging, stagingMem);
-
-        View = device.CreateImageView(new VkImageViewCreateInfo
-        {
-            Image = Image,
-            ViewType = VkImageViewType._2D,
-            Format = VkFormat.R8G8B8A8UNorm,
-            Components = new VkComponentMapping { R = VkComponentSwizzle.Identity, G = VkComponentSwizzle.Identity, B = VkComponentSwizzle.Identity, A = VkComponentSwizzle.Identity },
-            SubresourceRange = new VkImageSubresourceRange { AspectMask = VkImageAspectFlags.ColorBit, LevelCount = 1, LayerCount = 1 },
-        }, null);
-        Sampler = device.CreateSampler(Presets.Sampler.SamplerLinearClamped, null);
 
         // --- Descriptor set ---------------------------------------------------------------------
         var binding = new VkDescriptorSetLayoutBinding
@@ -197,9 +134,6 @@ public sealed unsafe class TextureAtlas : IDisposable
         var d = _vk.Device;
         d.DestroyDescriptorPool(Pool, null);
         d.DestroyDescriptorSetLayout(SetLayout, null);
-        d.DestroySampler(Sampler, null);
-        d.DestroyImageView(View, null);
-        d.DestroyImage(Image, null);
-        d.FreeMemory(Memory, null);
+        _texture.Dispose();
     }
 }

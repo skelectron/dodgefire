@@ -76,9 +76,10 @@ var renderer = new GameRenderer { Art = art };
 var audio = new AudioSystem(Path.Combine(AppContext.BaseDirectory, "assets", "kenney", "audio"));
 var keyboard = new KeyboardInput(window);
 var mouse = new MouseInput(window);
-var menu = new TitleMenu(keyboard, mouse);
+var pads = new GamepadInput();
+var menu = new TitleMenu(keyboard, mouse, pads);
 menu.SetPatternCosts(Crossfire.Sim.Rules.MatchRules.Default);
-var results = new ResultsScreen(keyboard, mouse);
+var results = new ResultsScreen(keyboard, mouse, pads);
 var sim = new Simulation();
 var debug = new DebugUi(vk.DeviceName, vk.ValidationEnabled) { GodMode = args.Contains("--god"), SpriteStress = IntArg("--sprites", 0), Audio = audio };
 var perf = new PerfLog();
@@ -107,9 +108,26 @@ void StartMatch(MatchOptions options, Crossfire.Sim.PlayerSetup[]? layoutOverrid
     setup = layout;
     currentOptions = options;
     var rules = debug.Rules;
-    if (options.Mode == GameMode.Team) rules.SwapRolesEachRound = false; // you picked your role: keep it
+    if (options.Mode is GameMode.Team or GameMode.LocalTeam) rules.SwapRolesEachRound = options.SwapRoles; // picked roles stay unless swapping was chosen
     state = SimState.CreateMatch(layout, matchSeed, rules);
-    controllers = MatchSetups.Controllers(options, layout.Length);
+    Span<int> connected = stackalloc int[GamepadInput.MaxPads];
+    int padCount = 0;
+    for (int p = 0; p < GamepadInput.MaxPads; p++) if (pads.IsConnected(p)) connected[padCount++] = p;
+    controllers = MatchSetups.Controllers(options, layout.Length, connected[..padCount]);
+    // --2v2 from the command line: the extra slots go to gamepads (in connection order) when there are any.
+    if (layoutOverride == null && twoVsTwo && options.Mode is GameMode.VsBot or GameMode.Local)
+    {
+        int next = 0;
+        for (int slot = 2; slot < controllers.Length && next < padCount; slot++)
+        {
+            while (next < padCount && UsesPad(connected[next])) next++;
+            if (next < padCount) controllers[slot].SetKind(ControllerKind.Gamepad, connected[next++]);
+        }
+    }
+    // A mouse player sharing the keyboard with others gives up Shift and the number keys.
+    bool anyKeys = false;
+    foreach (var c in controllers) anyKeys |= c.UsesKeyboard;
+    mouse.KeysShared = anyKeys;
     ApplyControllerLabels();
     recorder.Begin(state, matchSeed, layout);
     debug.Tampered = false;
@@ -149,6 +167,13 @@ void ApplyControllerLabels()
             : humans == 1 ? $"YOU + {bots} BOT{(bots > 1 ? "S" : "")} · {level}"
             : $"+ {bots} BOT{(bots > 1 ? "S" : "")} · {level}";
     }
+}
+
+bool UsesPad(int pad)
+{
+    foreach (var c in controllers)
+        if (c.Kind == ControllerKind.Gamepad && (c.Pad == pad || c.Pad < 0 && pads.FirstConnected == pad)) return true;
+    return false;
 }
 
 bool HasHuman()
@@ -218,11 +243,19 @@ Action<SimState> onReplayStep = s => { renderer.ConsumeEvents(s); audio.ConsumeE
 bool mWas = false;
 int menuFocus = menu.FocusSignature, menuValue = menu.ValueSignature, resultsFocus = -1;
 
+// BRUTAL logo for the splash: the official file, box-filtered to 1024 px wide (scaling only; see assets/brutal/SOURCE.txt).
+var logoTexture = GpuTexture.LoadPng(vk, Path.Combine(AppContext.BaseDirectory, "assets", "brutal", "LOGO_BRUTAL_WHT.png"), maxWidth: 1024);
+if (logoTexture == null) Console.WriteLine("Warning: BRUTAL logo missing (assets/brutal/LOGO_BRUTAL_WHT.png); the splash shows text only.");
+var splash = new SplashScreen(window, keyboard, mouse, pads,
+    logoTexture != null ? imgui.AddTexture(logoTexture.Sampler, logoTexture.View) : default,
+    logoTexture?.Width ?? 0, logoTexture?.Height ?? 0);
+
 Console.WriteLine($"CROSSFIRE running on {vk.DeviceName} (validation {(vk.ValidationEnabled ? "on" : "off")}, vsync {(vsync ? "on" : "off")})");
 
 while (!window.ShouldClose)
 {
     Glfw.PollEvents();
+    pads.Poll();
     bool f1 = window.GetKey(GlfwKey.F1) == GlfwKeyAction.Press;
     if (f1 && !f1Was) debug.Visible = !debug.Visible;
     f1Was = f1;
@@ -235,9 +268,35 @@ while (!window.ShouldClose)
     double frameDt = Math.Min(now - previous, 0.25); // avoid spiral of death after a stall
     previous = now;
 
+    // Startup splash (BRUTAL logo, licence 2.2): nothing else runs until it is over.
+    if (!splash.Done)
+    {
+        splash.Update((float)frameDt);
+        escWas = true; // an Esc used to skip must not also leave the menu or match
+        audio.SetMusic(Music.None);
+        audio.Update((float)frameDt);
+        if (splash.Done)
+        {
+            if (inMenu) menu.Open(); // swallows keys and clicks still held from skipping
+            accumulator = 0;
+            continue;
+        }
+        var splashFb = window.FramebufferSize;
+        if (splashFb.X > 0 && splashFb.Y > 0 && (splashFb.X != vk.Extent.Width || splashFb.Y != vk.Extent.Height)) vk.RequestResize();
+        imgui.NewFrame();
+        if (vk.BeginFrame(new float4(0f, 0f, 0f, 1f), out var splashCmd))
+        {
+            splash.Draw(renderer, window.Width, window.Height);
+            imgui.Render(splashCmd);
+            vk.EndFrame();
+        }
+        else imgui.DiscardFrame();
+        continue;
+    }
+
     // Menu / Esc / results handling.
     bool esc = window.GetKey(GlfwKey.Escape) == GlfwKeyAction.Press;
-    bool escPressed = esc && !escWas;
+    bool escPressed = esc && !escWas || !inMenu && (pads.AnyMenu & MenuActions.Escape) != 0; // pad Back/Select works like Esc
     escWas = esc;
     if (inMenu)
     {
@@ -330,7 +389,7 @@ while (!window.ShouldClose)
             if (stressBullets > 0 && state.Bullets.Count < stressBullets)
                 DebugUi.SpawnStressBullets(state, stressBullets - state.Bullets.Count);
             for (int p = 0; p < state.PlayerCount; p++)
-                inputs[p] = holdInputs || p >= controllers.Length ? default : controllers[p].Read(state, p, keyboard, mouse, keyboardBlocked, mouseBlocked);
+                inputs[p] = holdInputs || p >= controllers.Length ? default : controllers[p].Read(state, p, keyboard, mouse, pads, keyboardBlocked, mouseBlocked);
             if (debug.GodMode)
                 for (int p = 0; p < state.PlayerCount; p++) state.Players[p].InvulnTicks = Math.Max(state.Players[p].InvulnTicks, 2);
             if (stressBullets > 0 || debug.GodMode || debug.Tampered) recorder.MarkNotReplayable();
@@ -439,6 +498,7 @@ vk.Device.WaitIdle();
 ExitReplay();
 audio.Dispose();
 imgui.Dispose();
+logoTexture?.Dispose();
 batch.Dispose();
 atlas.Dispose();
 sim.Dispose();

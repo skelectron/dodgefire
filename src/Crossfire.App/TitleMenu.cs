@@ -29,7 +29,8 @@ internal sealed class TitleMenu
     [
         (GameMode.Team, "TEAM 4V4", "You and 3 bot teammates against 4 bots. Each team: 2 Dodgers + 2 Gunners."),
         (GameMode.VsBot, "VS BOT", "You against one bot. Roles swap each round."),
-        (GameMode.Local, "LOCAL 1V1", "Two players: P1 on mouse or WASD + QERF, P2 on Arrows + UIOP."),
+        (GameMode.Local, "LOCAL 1V1", "Two players: P1 on mouse, a gamepad or WASD + QERF; P2 on a gamepad or Arrows + UIOP."),
+        (GameMode.LocalTeam, "LOCAL 2V2", "Up to 4 players on mouse, both keyboard halves and gamepads. Bots fill empty seats."),
         (GameMode.Demo, "BOT VS BOT", "Sit back and watch two bots play."),
     ];
 
@@ -39,14 +40,16 @@ internal sealed class TitleMenu
         Controls,
         Loadout,
         Difficulty,
+        Roles,
         Start,
         Back,
     }
 
     private static readonly string[] RoleNames = ["DODGER", "GUNNER"];
-    private static readonly string[] ControlNames = ["MOUSE", "KEYBOARD"];
+    private static readonly string[] ControlNames = ["MOUSE", "KEYBOARD", "GAMEPAD"];
     private static readonly string[] DifficultyNames = ["EASY", "NORMAL", "HARD"];
-    private const int MaxRows = 6;
+    private const int MaxRows = 8;
+    private static readonly string[] SwapNames = ["FIXED", "SWAP EACH ROUND"];
 
     private static readonly (string Name, string Line1, string Line2)[] PatternInfo =
     [
@@ -81,6 +84,7 @@ internal sealed class TitleMenu
     private int _role;
     private int _controls; // 0 = mouse (default)
     private int _difficulty = 1;
+    private int _swapRoles; // team modes: 0 = fixed roles (default), 1 = swap every round
     private float _time;
 
     // Row rectangles from the last Draw (window units), for mouse hit-testing.
@@ -89,11 +93,50 @@ internal sealed class TitleMenu
     private int _rowCount;
     private float _rowX0, _rowX1, _centerX;
 
-    public TitleMenu(KeyboardInput keyboard, MouseInput mouse)
+    // Lobby page (Local 2v2): seats in MatchSetups.LocalTeam order.
+    private readonly GamepadInput _pads;
+    private readonly Lobby _lobby = new(4);
+    private readonly Func<InputDevice, bool> _deviceStillThere;
+    private bool _lobbyPage;
+    private readonly float[] _seatX = new float[4], _seatY = new float[4];
+    private float _seatW, _seatH;
+    private float _lobbyBtnY, _lobbyStartX, _lobbyBackX, _lobbyBtnW, _lobbyBtnH;
+    private static readonly string[] SeatNames = ["BLUE DODGER", "BLUE GUNNER", "RED DODGER", "RED GUNNER"];
+    private static readonly string[] PresetNames = ["CLASSIC", "HUNTER", "TRAPPER", "CUSTOM"];
+    private static readonly string[] PresetChoices = PresetNames.Select(n => $"<  {n}  >").ToArray();
+    private static readonly string[] PadLabels = Enumerable.Range(1, GamepadInput.MaxPads).Select(i => $"PAD {i}").ToArray();
+    private static readonly string[] PadCountText = Enumerable.Range(0, GamepadInput.MaxPads + 1)
+        .Select(n => n == 0 ? "NO GAMEPADS CONNECTED" : n == 1 ? "1 GAMEPAD CONNECTED" : $"{n} GAMEPADS CONNECTED").ToArray();
+
+    public TitleMenu(KeyboardInput keyboard, MouseInput mouse, GamepadInput pads)
     {
         _keyboard = keyboard;
         _mouse = mouse;
+        _pads = pads;
+        _deviceStillThere = d => d.Kind != DeviceKind.Gamepad || _pads.IsConnected(d.Pad);
     }
+
+    /// <summary>Seats for the Local 2v2 match: who sits where and the loadout each Gunner seat brings.</summary>
+    private LobbySeat[] LobbySeats()
+    {
+        var seats = new LobbySeat[_lobby.Seats];
+        for (int i = 0; i < seats.Length; i++)
+        {
+            var loadout = _lobby.PresetAt(i) switch
+            {
+                1 => Loadout.Hunter,
+                2 => Loadout.Trapper,
+                3 => CurrentLoadout,
+                _ => Loadout.Classic,
+            };
+            seats[i] = new LobbySeat(_lobby.DeviceAt(i), loadout);
+        }
+        return seats;
+    }
+
+    private static bool IsGunnerSeat(int seat) => seat % 2 == 1;
+    /// <summary>Gunner seats bring patterns; with role swap on, every seat does (Dodgers gun in later rounds).</summary>
+    private bool HasLoadoutChoice(int seat) => IsGunnerSeat(seat) || _swapRoles == 1;
 
     /// <summary>Card costs shown on the loadout page (from the current rules).</summary>
     public void SetPatternCosts(in Crossfire.Sim.Rules.MatchRules rules)
@@ -104,16 +147,39 @@ internal sealed class TitleMenu
     private Loadout CurrentLoadout => Loadout.Of(_picked[0], _picked[1], _picked[2], _picked[3]);
 
     /// <summary>Changes whenever the highlighted row or page changes (for the UI move sound).</summary>
-    public int FocusSignature => (_loadoutPage ? 2000 : _optionsPage ? 1000 : 0) + _focus;
+    public int FocusSignature => (_lobbyPage ? 3000 + LobbyMoveSignature : _loadoutPage ? 2000 : _optionsPage ? 1000 : 0) + _focus;
     /// <summary>Changes whenever a setting or the loadout changes (for the UI confirm sound).</summary>
-    public int ValueSignature => _role + _controls * 2 + _difficulty * 4 + _pickedCount * 16 + (int)_picked[0] * 128 + (int)_picked[1] * 1024 + (int)_picked[2] * 8192 + (int)_picked[3] * 65536;
+    public int ValueSignature => _role + _swapRoles * 4 + _controls * 2 + _difficulty * 8 + _pickedCount * 32 + (int)_picked[0] * 256 + (int)_picked[1] * 2048 + (int)_picked[2] * 16384 + (int)_picked[3] * 131072
+        + (_lobbyPage ? LobbyValueSignature * 1048576 : 0);
+
+    private int LobbyMoveSignature
+    {
+        get
+        {
+            int sig = 0;
+            for (int i = 0; i < _lobby.Seats; i++) sig = sig * 7 + (int)_lobby.DeviceAt(i).Kind + _lobby.DeviceAt(i).Pad + _lobby.PresetAt(i) * 3;
+            return sig & 0x3FF;
+        }
+    }
+
+    private int LobbyValueSignature
+    {
+        get
+        {
+            int sig = 0;
+            for (int i = 0; i < _lobby.Seats; i++) sig = sig * 2 + (_lobby.IsReady(i) ? 1 : 0);
+            return sig + _lobby.Humans * 16;
+        }
+    }
 
     public MatchOptions Options => new(
         Modes[_mode].Mode,
         (BotDifficulty)_difficulty,
         _role == 0 ? PlayerRole.Dodger : PlayerRole.Gunner,
-        _controls == 0 ? ControlScheme.Mouse : ControlScheme.Keyboard,
-        CurrentLoadout);
+        (ControlScheme)_controls,
+        CurrentLoadout,
+        Modes[_mode].Mode == GameMode.LocalTeam ? LobbySeats() : null,
+        _swapRoles == 1);
 
     /// <summary>Call when the menu opens. Swallows keys and buttons that are already held.</summary>
     public void Open()
@@ -123,11 +189,14 @@ internal sealed class TitleMenu
         _leftWas = _rightWas = true;
         _optionsPage = false;
         _loadoutPage = false;
+        _lobbyPage = false;
+        _creditsPage = false;
         _focus = _mode;
     }
 
     private static readonly GlfwKey[] WatchedKeys =
-        [GlfwKey.Up, GlfwKey.Down, GlfwKey.Left, GlfwKey.Right, GlfwKey.W, GlfwKey.S, GlfwKey.A, GlfwKey.D, GlfwKey.Enter, GlfwKey.KpEnter, GlfwKey.Space, GlfwKey.Escape];
+        [GlfwKey.Up, GlfwKey.Down, GlfwKey.Left, GlfwKey.Right, GlfwKey.W, GlfwKey.S, GlfwKey.A, GlfwKey.D, GlfwKey.Enter, GlfwKey.KpEnter, GlfwKey.Space, GlfwKey.Escape,
+         GlfwKey.X, GlfwKey.RightControl, GlfwKey.Backspace];
 
     private bool Pressed(GlfwKey k)
     {
@@ -144,8 +213,9 @@ internal sealed class TitleMenu
         int n = 0;
         var mode = Modes[_mode].Mode;
         if (mode is GameMode.Team or GameMode.VsBot) into[n++] = Row.Role;
-        if (mode != GameMode.Demo) into[n++] = Row.Controls;
+        if (mode is not (GameMode.Demo or GameMode.LocalTeam)) into[n++] = Row.Controls;
         if (mode != GameMode.Demo) into[n++] = Row.Loadout;
+        if (mode is GameMode.Team or GameMode.LocalTeam) into[n++] = Row.Roles;
         if (mode != GameMode.Local) into[n++] = Row.Difficulty;
         into[n++] = Row.Start;
         into[n++] = Row.Back;
@@ -157,8 +227,9 @@ internal sealed class TitleMenu
         switch (row)
         {
             case Row.Role: _role = (_role + 1) % 2; break;
-            case Row.Controls: _controls = (_controls + 1) % 2; break;
+            case Row.Controls: _controls = (_controls + (dir < 0 ? 2 : 1)) % 3; break;
             case Row.Difficulty: _difficulty = Math.Clamp(_difficulty + dir, 0, DifficultyNames.Length - 1); break;
+            case Row.Roles: _swapRoles = 1 - _swapRoles; break;
         }
     }
 
@@ -182,12 +253,22 @@ internal sealed class TitleMenu
     public Result Update(float dt, bool mouseBlocked)
     {
         _time += dt;
+        if (_lobbyPage) return UpdateLobby(mouseBlocked);
+        var pad = _pads.AnyMenu;
         bool up = Pressed(GlfwKey.Up) | Pressed(GlfwKey.W);
         bool down = Pressed(GlfwKey.Down) | Pressed(GlfwKey.S);
         bool left = Pressed(GlfwKey.Left) | Pressed(GlfwKey.A);
         bool right = Pressed(GlfwKey.Right) | Pressed(GlfwKey.D);
         bool confirm = Pressed(GlfwKey.Enter) | Pressed(GlfwKey.KpEnter) | Pressed(GlfwKey.Space);
         bool esc = Pressed(GlfwKey.Escape);
+        // Any gamepad can drive the menu too (B = back, but never quits the game from the first page).
+        up |= (pad & MenuActions.Up) != 0;
+        down |= (pad & MenuActions.Down) != 0;
+        left |= (pad & MenuActions.Left) != 0;
+        right |= (pad & MenuActions.Right) != 0;
+        confirm |= (pad & MenuActions.Confirm) != 0;
+        bool padBack = (pad & MenuActions.Back) != 0;
+        if (padBack && (_optionsPage || _loadoutPage || _creditsPage)) esc = true;
 
         var (mx, my) = _mouse.WindowPos;
         bool moved = mx != _lastMouseX || my != _lastMouseY;
@@ -201,15 +282,23 @@ internal sealed class TitleMenu
 
         if (_loadoutPage) return UpdateLoadout(up, down, left, right, confirm, esc, lClick, rClick, mx, my, moved, mouseBlocked);
 
+        if (_creditsPage)
+        {
+            if (esc || confirm || lClick || rClick) { _creditsPage = false; _focus = CreditsRow; }
+            return Result.None;
+        }
+
         if (!_optionsPage)
         {
-            // Page 1: modes. Hover highlights only; click/Enter opens the options page.
+            // Page 1: modes, then CREDITS. Hover highlights only; click/Enter opens the options (or credits) page.
+            int count = CreditsRow + 1;
             if (esc) return Result.Quit;
-            if (up) _focus = (_focus + Modes.Length - 1) % Modes.Length;
-            if (down) _focus = (_focus + 1) % Modes.Length;
-            if (hit >= 0 && hit < Modes.Length && moved) _focus = hit;
-            if (confirm) OpenOptions(_focus);
-            else if (lClick && hit >= 0 && hit < Modes.Length) OpenOptions(hit);
+            if (up) _focus = (_focus + count - 1) % count;
+            if (down) _focus = (_focus + 1) % count;
+            if (hit >= 0 && hit < count && moved) _focus = hit;
+            int pick = confirm ? _focus : lClick && hit >= 0 && hit < count ? hit : -1;
+            if (pick == CreditsRow) { _creditsPage = true; _rowCount = 0; }
+            else if (pick >= 0) OpenOptions(pick);
             return Result.None;
         }
 
@@ -226,7 +315,7 @@ internal sealed class TitleMenu
         {
             if (rows[_focus] == Row.Back) { CloseOptions(); return Result.None; }
             if (rows[_focus] == Row.Loadout) { OpenLoadout(); return Result.None; }
-            return Result.Start;
+            return StartOrLobby();
         }
         if ((lClick || rClick) && hit >= 0 && hit < n)
         {
@@ -234,7 +323,7 @@ internal sealed class TitleMenu
             switch (rows[hit])
             {
                 case Row.Loadout: OpenLoadout(); return Result.None;
-                case Row.Start: return lClick ? Result.Start : Result.None;
+                case Row.Start: return lClick ? StartOrLobby() : Result.None;
                 case Row.Back: CloseOptions(); return Result.None;
                 default:
                     // Left half (or right click) = previous, right half = next.
@@ -270,7 +359,9 @@ internal sealed class TitleMenu
         r.Label(dl, "TEAM BULLET-HELL PVP", cx, y + 82, 18, new Color4(0.75f, 0.78f, 0.9f), center: true);
         _rowCount = 0;
 
-        if (_loadoutPage) DrawLoadout(r, dl, w, h);
+        if (_creditsPage) DrawCredits(r, dl, cx, h);
+        else if (_lobbyPage) DrawLobby(r, dl, w, h);
+        else if (_loadoutPage) DrawLoadout(r, dl, w, h);
         else if (!_optionsPage) DrawModes(r, dl, cx, h);
         else DrawOptions(r, dl, cx, h);
 
@@ -289,10 +380,66 @@ internal sealed class TitleMenu
             AddRow(rowY - 8, rowH - 6);
             if (focused) Fill(dl, _rowX0, rowY - 8, _rowX1 - _rowX0, rowH - 6, new Color4(1f, 1f, 1f, 0.09f));
             var c = focused ? new Color4(1f, 0.9f, 0.4f) : new Color4(0.7f, 0.72f, 0.82f);
-            r.Label(dl, focused ? $"> {Modes[i].Title} <" : Modes[i].Title, cx, rowY, 30, c, center: true);
+            r.Label(dl, focused ? ModeTitlesFocused[i] : Modes[i].Title, cx, rowY, 30, c, center: true);
         }
-        r.Label(dl, Modes[_focus].Detail, cx, y + Modes.Length * rowH + 6, 15, new Color4(0.8f, 0.82f, 0.9f), center: true);
+        {
+            // CREDITS: a smaller row under the modes.
+            bool focused = _focus == CreditsRow;
+            float rowY = y + Modes.Length * rowH + 4;
+            AddRow(rowY - 6, 34);
+            if (focused) Fill(dl, _rowX0, rowY - 6, _rowX1 - _rowX0, 34, new Color4(1f, 1f, 1f, 0.07f));
+            r.Label(dl, focused ? "> CREDITS <" : "CREDITS", cx, rowY, 20, focused ? new Color4(1f, 0.9f, 0.4f) : new Color4(0.55f, 0.57f, 0.66f), center: true);
+        }
+        string detail = _focus == CreditsRow ? "Who made this, and the licences it ships under." : Modes[_focus].Detail;
+        r.Label(dl, detail, cx, y + Modes.Length * rowH + 50, 15, new Color4(0.8f, 0.82f, 0.9f), center: true);
         r.Label(dl, "CLICK OR ENTER TO CHOOSE  ·  ESC QUIT", cx, h - 64, 13, new Color4(0.55f, 0.57f, 0.65f), center: true);
+    }
+
+    // --- Credits page (BRUTAL License v1.0, 2.1: the copyright notice in the credits) ----------------
+
+    private static readonly int CreditsRow = Modes.Length;
+    private static readonly string[] ModeTitlesFocused = Modes.Select(m => $"> {m.Title} <").ToArray();
+
+    private static readonly (string Text, float Size, int Style)[] CreditLines =
+    [
+        ("CREDITS", 34, 0),
+        ("", 10, 2),
+        ("BUILT WITH BRUTAL", 20, 1),
+        (SplashScreen.BrutalCopyright, 15, 2),
+        ("This product is built with BRUTAL, a game development framework by Ahwoo Limited, used under the BRUTAL License v1.0.", 13, 3),
+        (SplashScreen.BrutalUrl, 13, 3),
+        ("", 14, 2),
+        ("ART, FONT, SOUND EFFECTS AND MUSIC", 20, 1),
+        ("Kenney  ·  www.kenney.nl  ·  Creative Commons Zero (CC0)", 15, 2),
+        ("", 14, 2),
+        ("THIRD-PARTY SOFTWARE", 20, 1),
+        ("GLFW  ·  SDL_GameControllerDB  ·  Dear ImGui  ·  ImPlot  ·  SDL3  ·  SDL_mixer", 14, 2),
+        ("stb  ·  stb_vorbis  ·  dr_flac  ·  dr_mp3  ·  shaderc  ·  glslang  ·  SPIRV-Tools", 14, 2),
+        ("Khronos Vulkan headers  ·  glad  ·  ResX.NET", 14, 2),
+        ("Full licence texts: NOTICE.txt and the LICENSES folder next to the game.", 13, 3),
+    ];
+
+    private bool _creditsPage;
+
+    private void DrawCredits(GameRenderer r, ImDrawListPtr dl, float cx, float h)
+    {
+        float y = h * 0.27f;
+        foreach (var (text, size, style) in CreditLines)
+        {
+            if (text.Length > 0)
+            {
+                var c = style switch
+                {
+                    0 => new Color4(1f, 0.9f, 0.4f),
+                    1 => new Color4(0.45f, 0.85f, 1f),
+                    2 => new Color4(0.88f, 0.9f, 0.95f),
+                    _ => new Color4(0.6f, 0.63f, 0.72f),
+                };
+                r.Label(dl, text, cx, y, size, c, center: true);
+            }
+            y += size + 12;
+        }
+        r.Label(dl, "CLICK, ENTER OR ESC TO GO BACK", cx, h - 64, 13, new Color4(0.55f, 0.57f, 0.65f), center: true);
     }
 
     private void DrawOptions(GameRenderer r, ImDrawListPtr dl, float cx, float h)
@@ -322,7 +469,8 @@ internal sealed class TitleMenu
             if (focused) Fill(dl, _rowX0, rowY - 6, _rowX1 - _rowX0, rowH - 6, new Color4(1f, 1f, 1f, 0.08f));
             var (label, value, color) = row switch
             {
-                Row.Role => (Modes[_mode].Mode == GameMode.VsBot ? "START AS" : "YOUR ROLE", RoleNames[_role], new Color4(0.45f, 0.85f, 1f)),
+                Row.Role => (Modes[_mode].Mode == GameMode.VsBot || _swapRoles == 1 ? "START AS" : "YOUR ROLE", RoleNames[_role], new Color4(0.45f, 0.85f, 1f)),
+                Row.Roles => ("ROLES", SwapNames[_swapRoles], new Color4(0.75f, 0.9f, 0.75f)),
                 Row.Controls => ("CONTROLS", ControlNames[_controls], new Color4(0.85f, 0.85f, 0.95f)),
                 Row.Loadout => ("GUNNER PATTERNS", _loadoutSummary, new Color4(1f, 0.78f, 0.45f)),
                 _ => ("BOT DIFFICULTY", DifficultyNames[_difficulty],
@@ -335,19 +483,185 @@ internal sealed class TitleMenu
 
         // What the chosen role and controls mean.
         float hintY = sy + n * rowH + 26;
-        if (Modes[_mode].Mode != GameMode.Demo)
+        if (Modes[_mode].Mode == GameMode.LocalTeam)
+        {
+            r.Label(dl, "START opens the lobby: everyone picks a seat there. Gunner seats can use these patterns (CUSTOM).", cx, hintY, 13, new Color4(0.62f, 0.66f, 0.76f), center: true);
+        }
+        else if (Modes[_mode].Mode != GameMode.Demo)
         {
             bool gunner = _role == 1 && Modes[_mode].Mode is GameMode.Team or GameMode.VsBot;
-            string hint = (_controls == 0, gunner) switch
+            string hint = (_controls, gunner) switch
             {
-                (true, false) => "Dodger on mouse: ship follows the pointer · L-click flip · R-click break · Shift focus",
-                (true, true) => "Gunner on mouse: reticle follows the pointer · wheel picks a pattern · L-click fires · R-click overdrive",
-                (false, false) => "Dodger on keyboard: WASD move · Shift focus · Space flip · X break",
-                _ => "Gunner on keyboard: WASD aim · Q E R F fire patterns · X overdrive",
+                (0, false) => "Dodger on mouse: ship follows the pointer · L-click flip · R-click break · Shift focus",
+                (0, true) => "Gunner on mouse: reticle follows the pointer · wheel picks a pattern · L-click fires · R-click overdrive",
+                (1, false) => "Dodger on keyboard: WASD move · Shift focus · Space flip · X break",
+                (1, true) => "Gunner on keyboard: WASD aim · Q E R F fire patterns · X overdrive",
+                (_, false) => _pads.ConnectedCount > 0 ? "Dodger on gamepad: stick move · LB focus · A flip · RB break" : "No gamepad connected yet: plug one in (any XInput / SDL-mapped pad)",
+                _ => _pads.ConnectedCount > 0 ? "Gunner on gamepad: stick aims · A B X Y fire patterns · RB overdrive · LB slow aim" : "No gamepad connected yet: plug one in (any XInput / SDL-mapped pad)",
             };
             r.Label(dl, hint, cx, hintY, 13, new Color4(0.62f, 0.66f, 0.76f), center: true);
         }
         r.Label(dl, "CLICK A SETTING TO CHANGE IT  ·  ENTER START  ·  ESC BACK", cx, h - 64, 13, new Color4(0.55f, 0.57f, 0.65f), center: true);
+    }
+
+    // --- Lobby page (Local 2v2): devices join seats, pick a Gunner loadout, ready up ---------------
+
+    private Result StartOrLobby()
+    {
+        if (Modes[_mode].Mode != GameMode.LocalTeam) return Result.Start;
+        _lobbyPage = true;
+        _lobby.Clear();
+        return Result.None;
+    }
+
+    private static readonly InputDevice MouseDevice = new(DeviceKind.Mouse);
+    private static readonly InputDevice KeysLeft = new(DeviceKind.KeyboardLeft);
+    private static readonly InputDevice KeysRight = new(DeviceKind.KeyboardRight);
+
+    private Result UpdateLobby(bool mouseBlocked)
+    {
+        _lobby.Prune(_deviceStillThere);
+        bool start = false;
+
+        // Keyboard halves: WASD + Space (join/ready) + X (leave); Arrows + Enter (join/ready) + Right Ctrl / Backspace (leave).
+        var kl = MenuActions.None;
+        if (Pressed(GlfwKey.W)) kl |= MenuActions.Up;
+        if (Pressed(GlfwKey.S)) kl |= MenuActions.Down;
+        if (Pressed(GlfwKey.A)) kl |= MenuActions.Left;
+        if (Pressed(GlfwKey.D)) kl |= MenuActions.Right;
+        if (Pressed(GlfwKey.Space)) kl |= MenuActions.Confirm;
+        if (Pressed(GlfwKey.X)) kl |= MenuActions.Back;
+        var kr = MenuActions.None;
+        if (Pressed(GlfwKey.Up)) kr |= MenuActions.Up;
+        if (Pressed(GlfwKey.Down)) kr |= MenuActions.Down;
+        if (Pressed(GlfwKey.Left)) kr |= MenuActions.Left;
+        if (Pressed(GlfwKey.Right)) kr |= MenuActions.Right;
+        if (Pressed(GlfwKey.Enter) | Pressed(GlfwKey.KpEnter)) kr |= MenuActions.Confirm;
+        if (Pressed(GlfwKey.RightControl) | Pressed(GlfwKey.Backspace)) kr |= MenuActions.Back;
+        if (Pressed(GlfwKey.Escape)) { _lobbyPage = false; return Result.None; }
+        start |= _lobby.Apply(KeysLeft, kl);
+        start |= _lobby.Apply(KeysRight, kr);
+
+        for (int p = 0; p < GamepadInput.MaxPads; p++)
+        {
+            if (!_pads.IsConnected(p)) continue;
+            var a = _pads.Menu(p);
+            // B on a pad that has no seat leaves the lobby (so a pad-only group can get back out).
+            if ((a & MenuActions.Back) != 0 && _lobby.SeatOf(new InputDevice(DeviceKind.Gamepad, p)) < 0 && _lobby.Humans == 0) { _lobbyPage = false; return Result.None; }
+            start |= _lobby.Apply(new InputDevice(DeviceKind.Gamepad, p), a);
+        }
+
+        // Mouse: click a free seat to take it (or move there), click your seat to ready / un-ready,
+        // click your Gunner seat's pattern line to change it, right click to leave. Buttons: START, BACK.
+        var (mx, my) = _mouse.WindowPos;
+        bool lDown = _mouse.LeftDown, rDown = _mouse.RightDown;
+        bool lClick = lDown && !_leftWas, rClick = rDown && !_rightWas;
+        _leftWas = lDown;
+        _rightWas = rDown;
+        if (!mouseBlocked && (lClick || rClick))
+        {
+            int seat = HitSeat(mx, my);
+            int mine = _lobby.SeatOf(MouseDevice);
+            if (rClick)
+            {
+                if (mine >= 0 && _lobby.IsReady(mine)) _lobby.SetReady(MouseDevice, false);
+                else _lobby.Leave(MouseDevice);
+            }
+            else if (seat >= 0)
+            {
+                if (mine < 0) _lobby.Join(MouseDevice, seat);
+                else if (seat != mine) _lobby.MoveTo(MouseDevice, seat);
+                else if (HasLoadoutChoice(seat) && !_lobby.IsReady(seat) && my > _seatY[seat] + _seatH - 46) _lobby.CyclePreset(MouseDevice, 1);
+                else _lobby.SetReady(MouseDevice, !_lobby.IsReady(seat));
+            }
+            else if (Inside(mx, my, _lobbyStartX, _lobbyBtnY, _lobbyBtnW, _lobbyBtnH)) start |= _lobby.AllReady;
+            else if (Inside(mx, my, _lobbyBackX, _lobbyBtnY, _lobbyBtnW, _lobbyBtnH)) { _lobbyPage = false; return Result.None; }
+        }
+        return start && _lobby.AllReady ? Result.Start : Result.None;
+    }
+
+    private static bool Inside(float x, float y, float rx, float ry, float rw, float rh) => x >= rx && x <= rx + rw && y >= ry && y <= ry + rh;
+
+    private int HitSeat(float x, float y)
+    {
+        for (int i = 0; i < _lobby.Seats; i++)
+            if (Inside(x, y, _seatX[i], _seatY[i], _seatW, _seatH)) return i;
+        return -1;
+    }
+
+    private static string DeviceLabel(InputDevice d) => d.Kind switch
+    {
+        DeviceKind.Mouse => "MOUSE",
+        DeviceKind.KeyboardLeft => "WASD KEYS",
+        DeviceKind.KeyboardRight => "ARROW KEYS",
+        DeviceKind.Gamepad => PadLabels[Math.Clamp(d.Pad, 0, PadLabels.Length - 1)],
+        _ => "BOT",
+    };
+
+    private void DrawLobby(GameRenderer r, ImDrawListPtr dl, float w, float h)
+    {
+        float cx = w * 0.5f;
+        float y = h * 0.29f;
+        r.Label(dl, "LOCAL 2V2 LOBBY", cx, y - 34, 34, new Color4(1f, 0.9f, 0.4f), center: true);
+        r.Label(dl, PadCountText[Math.Min(_pads.ConnectedCount, GamepadInput.MaxPads)], cx, y + 8, 13, new Color4(0.6f, 0.64f, 0.74f), center: true);
+
+        const float sw = 214, sh = 178, gap = 14, teamGap = 44;
+        _seatW = sw;
+        _seatH = sh;
+        float total = 4 * sw + 2 * gap + teamGap;
+        float sy = y + 40;
+        string botLevel = DifficultyNames[_difficulty];
+        for (int i = 0; i < _lobby.Seats; i++)
+        {
+            float x = cx - total * 0.5f + i * (sw + gap) + (i >= 2 ? teamGap - gap : 0);
+            _seatX[i] = x;
+            _seatY[i] = sy;
+            var team = GameRenderer.TeamColor[i / 2];
+            var d = _lobby.DeviceAt(i);
+            bool taken = !d.IsNone, ready = _lobby.IsReady(i);
+            Fill(dl, x, sy, sw, sh, taken ? new Color4(team.R, team.G, team.B, ready ? 0.3f : 0.16f) : new Color4(1f, 1f, 1f, 0.04f));
+            Fill(dl, x, sy, sw, 4, team);
+            r.Label(dl, SeatNames[i], x + sw * 0.5f, sy + 14, 16, team, center: true);
+            if (taken)
+            {
+                r.Label(dl, DeviceLabel(d), x + sw * 0.5f, sy + 46, 26, new Color4(0.95f, 0.96f, 1f), center: true);
+                r.Label(dl, ready ? "READY" : "CHOOSING", x + sw * 0.5f, sy + 86, 18, ready ? new Color4(0.45f, 1f, 0.55f) : new Color4(1f, 0.85f, 0.4f), center: true);
+            }
+            else
+            {
+                r.Label(dl, "BOT", x + sw * 0.5f, sy + 46, 26, new Color4(0.5f, 0.52f, 0.6f), center: true);
+                r.Label(dl, botLevel, x + sw * 0.5f, sy + 86, 14, new Color4(0.5f, 0.52f, 0.6f), center: true);
+            }
+            if (HasLoadoutChoice(i) && taken)
+            {
+                Fill(dl, x + 10, sy + sh - 42, sw - 20, 32, new Color4(1f, 0.78f, 0.3f, ready ? 0.08f : 0.16f));
+                r.Label(dl, ready ? PresetNames[_lobby.PresetAt(i)] : PresetChoices[_lobby.PresetAt(i)], x + sw * 0.5f, sy + sh - 35, 16, new Color4(1f, 0.85f, 0.5f), center: true);
+            }
+            else if (!IsGunnerSeat(i) && _swapRoles == 0)
+            {
+                r.Label(dl, "dodges, flips, breaks", x + sw * 0.5f, sy + sh - 32, 12, new Color4(0.55f, 0.58f, 0.68f), center: true);
+            }
+        }
+
+        // START / BACK.
+        _lobbyBtnW = 200;
+        _lobbyBtnH = 42;
+        _lobbyBtnY = sy + sh + 24;
+        _lobbyStartX = cx - _lobbyBtnW - 10;
+        _lobbyBackX = cx + 10;
+        bool allReady = _lobby.AllReady;
+        Fill(dl, _lobbyStartX, _lobbyBtnY, _lobbyBtnW, _lobbyBtnH, new Color4(0.25f, 0.7f, 0.35f, allReady ? 0.55f : 0.1f));
+        r.Label(dl, allReady ? "START" : _lobby.Humans == 0 ? "JOIN FIRST" : "WAITING", _lobbyStartX + _lobbyBtnW * 0.5f, _lobbyBtnY + 11, 18,
+            allReady ? new Color4(0.9f, 1f, 0.9f) : new Color4(0.45f, 0.47f, 0.5f), center: true);
+        Fill(dl, _lobbyBackX, _lobbyBtnY, _lobbyBtnW, _lobbyBtnH, new Color4(1f, 1f, 1f, 0.06f));
+        r.Label(dl, "BACK", _lobbyBackX + _lobbyBtnW * 0.5f, _lobbyBtnY + 11, 18, new Color4(0.8f, 0.82f, 0.9f), center: true);
+
+        var help = new Color4(0.62f, 0.66f, 0.76f);
+        float hy = _lobbyBtnY + _lobbyBtnH + 22;
+        r.Label(dl, "JOIN / READY:  CLICK A SEAT  ·  SPACE (WASD KEYS)  ·  ENTER (ARROW KEYS)  ·  A (GAMEPAD)", cx, hy, 13, help, center: true);
+        r.Label(dl, "CHANGE SEAT: LEFT / RIGHT  ·  GUNNER PATTERNS: UP / DOWN  ·  LEAVE: RIGHT-CLICK, X, R-CTRL, B", cx, hy + 20, 13, help, center: true);
+        r.Label(dl, allReady ? "EVERYONE IS READY: PRESS JOIN AGAIN OR CLICK START" : "EMPTY SEATS ARE PLAYED BY BOTS  ·  ESC BACK", cx, h - 64, 13,
+            allReady ? new Color4(0.5f, 1f, 0.6f) : new Color4(0.55f, 0.57f, 0.65f), center: true);
     }
 
     // --- Loadout page: pick 4 of 7 patterns; selection order = button order ------------------------

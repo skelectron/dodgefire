@@ -50,10 +50,13 @@ internal sealed class ResultsScreen
     /// <summary>The highlighted button (for the UI move sound).</summary>
     public int Focus => _focus;
 
-    public ResultsScreen(KeyboardInput keyboard, MouseInput mouse)
+    private readonly GamepadInput _pads;
+
+    public ResultsScreen(KeyboardInput keyboard, MouseInput mouse, GamepadInput pads)
     {
         _keyboard = keyboard;
         _mouse = mouse;
+        _pads = pads;
     }
 
     public void Open(SimState s, MatchStats stats, SlotController[] controllers, int youSlot, bool replayAvailable)
@@ -83,7 +86,7 @@ internal sealed class ResultsScreen
             ref readonly var p = ref stats.Players[i];
             bool bot = i < controllers.Length && controllers[i].IsBot;
             _team[r] = s.Players[i].Team;
-            _names[r] = i == youSlot ? $"P{i + 1} YOU" : bot ? $"P{i + 1} BOT" : $"P{i + 1}";
+            _names[r] = i == youSlot ? $"P{i + 1} YOU" : bot ? $"P{i + 1} BOT" : i < controllers.Length ? $"P{i + 1} {controllers[i].ShortLabel}" : $"P{i + 1}";
             _roles[r] = p.TicksDodging > 0 && p.TicksGunning > 0 ? "BOTH" : p.TicksGunning > 0 ? "GUNNER" : "DODGER";
             _cells[r, 0] = p.LivesLost.ToString();
             _cells[r, 1] = p.LivesTaken.ToString();
@@ -115,6 +118,10 @@ internal sealed class ResultsScreen
         bool left = Pressed(GlfwKey.Left) | Pressed(GlfwKey.A);
         bool right = Pressed(GlfwKey.Right) | Pressed(GlfwKey.D);
         bool confirm = Pressed(GlfwKey.Enter) | Pressed(GlfwKey.KpEnter) | Pressed(GlfwKey.Space);
+        var pad = _time > 0.4f ? _pads.AnyMenu : MenuActions.None; // ignore the press that ended the match
+        left |= (pad & MenuActions.Left) != 0;
+        right |= (pad & MenuActions.Right) != 0;
+        confirm |= (pad & MenuActions.Confirm) != 0;
         if (left) _focus = Next(_focus, -1);
         if (right) _focus = Next(_focus, 1);
 
@@ -155,7 +162,7 @@ internal sealed class ResultsScreen
         float appear = Math.Clamp(_time / 0.35f, 0f, 1f);
         Fill(dl, 0, 0, w, h, new Color4(0.01f, 0.01f, 0.03f, 0.55f * appear));
 
-        const float colW = 104, nameW = 120, roleW = 80;
+        const float colW = 104, nameW = 140, roleW = 80;
         float tableW = nameW + roleW + Columns.Length * colW;
         float panelW = tableW + 40, rowH = 26;
         float panelH = 150 + 30 + _rows * rowH + 90;

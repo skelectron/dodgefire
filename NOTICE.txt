@@ -1,0 +1,32 @@
+BRUTAL game development framework is Copyright (c) 2024 Ahwoo Limited.
+
+This product is built with BRUTAL, a game development framework by Ahwoo Limited, used under the BRUTAL License v1.0.
+
+www.ahwoo.com/brutal
+
+------------------------------------------------------------------------------
+CROSSFIRE
+------------------------------------------------------------------------------
+
+The BRUTAL License v1.0 is in LICENSES/BRUTAL-LICENSE.txt.
+
+Third-party software that BRUTAL redistributes and CROSSFIRE ships with is
+listed, with its licences in full, in LICENSES/:
+
+  BRUTAL-GLFW-THIRD-PARTY-NOTICES.txt                 GLFW, SDL_GameControllerDB, Wayland protocols
+  BRUTAL-IMGUI-THIRD-PARTY-NOTICES.txt                Dear ImGui, ImPlot, stb_rect_pack/textedit/truetype
+  BRUTAL-SDL-THIRD-PARTY-NOTICES.txt                  SDL3 and the components it bundles
+  BRUTAL-SDL-MIXER-THIRD-PARTY-NOTICES.txt            SDL_mixer, stb_vorbis, dr_flac, dr_mp3
+  BRUTAL-VULKAN-THIRD-PARTY-NOTICES.txt               Khronos Vulkan API registry, headers, reference pages
+  BRUTAL-VULKAN-ABSTRACTIONS-THIRD-PARTY-NOTICES.txt  Khronos Vulkan API registry, headers, reference pages
+  BRUTAL-SHADERC-THIRD-PARTY-NOTICES.txt              shaderc and the libraries it bundles (glslang, SPIRV-Tools)
+  BRUTAL-STB-THIRD-PARTY-NOTICES.txt                  stb_image, stb_image_write
+  BRUTAL-OPENGL-THIRD-PARTY-NOTICES.txt               glad, Khronos OpenGL specifications, khrplatform.h
+  BRUTAL-LOCALIZATION-THIRD-PARTY-NOTICES.txt         ResX.NET
+
+Art, font, sound effects and music: Kenney (www.kenney.nl), released under
+Creative Commons Zero (CC0). Licence files: assets/kenney/space-shooter/license.txt
+and assets/kenney/audio/license-*.txt. Audio sources: assets/kenney/audio/SOURCES.txt.
+
+The BRUTAL logo shown at startup is the official logo from ahwoo.com/brutal-branding,
+unaltered except for scaling (assets/brutal/SOURCE.txt).

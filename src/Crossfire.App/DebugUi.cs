@@ -118,7 +118,7 @@ internal sealed class DebugUi(string deviceName, bool validation)
                 restart = true;
             }
 
-            // Per-slot controller: click to cycle Mouse -> Keyboard L -> Keyboard R -> Bot Easy/Normal/Hard.
+            // Per-slot controller: click to cycle Mouse -> Keyboard L -> Keyboard R -> Gamepad (first connected) -> Bot Easy/Normal/Hard.
             for (int i = 0; i < controllers.Length; i++)
             {
                 ImGui.PushID(100 + i);
@@ -127,11 +127,12 @@ internal sealed class DebugUi(string deviceName, bool validation)
                     var c = controllers[i];
                     if (!c.IsBot)
                     {
-                        if (c.Kind == ControllerKind.KeyboardRight) c.SetBot(BotDifficulty.Easy);
+                        if (c.Kind == ControllerKind.Gamepad) c.SetBot(BotDifficulty.Easy);
                         else c.SetKind(c.Kind switch
                         {
                             ControllerKind.Mouse => ControllerKind.KeyboardLeft,
                             ControllerKind.KeyboardLeft => ControllerKind.KeyboardRight,
+                            ControllerKind.KeyboardRight => ControllerKind.Gamepad,
                             _ => ControllerKind.Mouse,
                         });
                     }

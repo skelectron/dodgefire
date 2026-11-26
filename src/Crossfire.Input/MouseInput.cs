@@ -33,6 +33,9 @@ public sealed class MouseInput(GlfwWindow window)
     public bool RightDown => window.GetMouseButton(GlfwMouseButton.Right) == GlfwButtonAction.Press;
     public bool MiddleDown => window.GetMouseButton(GlfwMouseButton.Middle) == GlfwButtonAction.Press;
 
+    /// <summary>True when another player uses the keyboard: Shift and the number keys then belong to them.</summary>
+    public bool KeysShared { get; set; }
+
     private float _wheel;
 
     public void SetArenaTarget(float x, float y)
@@ -55,12 +58,12 @@ public sealed class MouseInput(GlfwWindow window)
     public SimInput Read(SimState s, int slot, bool mouseBlocked)
     {
         // Number keys still pick a pattern directly (handy while aiming).
-        for (int k = 0; k < MatchRules.PatternSlots; k++)
+        for (int k = 0; k < MatchRules.PatternSlots && !KeysShared; k++)
             if (window.GetKey(GlfwKey.Number1 + k) == GlfwKeyAction.Press) SelectedPattern = k;
 
         ref readonly var p = ref s.Players[slot];
         bool left = !mouseBlocked && LeftDown, right = !mouseBlocked && RightDown;
-        bool shift = window.GetKey(GlfwKey.LeftShift) != GlfwKeyAction.Release || window.GetKey(GlfwKey.RightShift) != GlfwKeyAction.Release;
+        bool shift = !KeysShared && (window.GetKey(GlfwKey.LeftShift) != GlfwKeyAction.Release || window.GetKey(GlfwKey.RightShift) != GlfwKeyAction.Release);
         var buttons = left ? InputButtons.Start : InputButtons.None; // click = rematch on the match-over screen
 
         if (p.Role == PlayerRole.Dodger)

@@ -11,5 +11,7 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <ProjectReference Include="..\..\src\Crossfire.Sim\Crossfire.Sim.csproj" />
+    <!-- Pure input logic only (gamepad mapping, lobby); no window or GLFW calls in tests. -->
+    <ProjectReference Include="..\..\src\Crossfire.Input\Crossfire.Input.csproj" />
   </ItemGroup>
 </Project>

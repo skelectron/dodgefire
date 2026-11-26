@@ -1,0 +1,7 @@
+Official BRUTAL logo, unaltered.
+Source: https://ahwoo.com/brutal-branding (redirects to https://github.com/ahwootech/brutal-branding),
+commit 5d38373a24fed6f8afcc8bc803c96b6163ddf4b4, fetched 2026-11-26.
+
+BRUTAL License v1.0, section 2.2: the logo is displayed before gameplay, unaltered except for scaling,
+for long enough to be legible, and no less prominent than logos for other parties.
+CROSSFIRE shows LOGO_BRUTAL_WHT.png (white text, for dark backgrounds) on its startup splash.

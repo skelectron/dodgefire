@@ -588,21 +588,31 @@ public sealed class GameRenderer
 
         // Bottom: control hints per player.
         float by = windowH - HudBottom + 7;
+        // With two humans on one side (local 2v2), both hints share that half: compact text, the second one
+        // right-aligned against the midline (left team) or left-aligned from it (right team).
+        Span<int> perSide = stackalloc int[SimState.TeamCount];
+        for (int i = 0; i < s.PlayerCount && i < ControlHints.Length; i++)
+            if (ControlHints[i] != null) perSide[s.Players[i].Team == 0 ? 0 : 1]++;
+        Span<int> drawn = stackalloc int[SimState.TeamCount];
         bool hintLeft = false, hintRight = false;
         for (int i = 0; i < s.PlayerCount && i < ControlHints.Length; i++)
         {
             ref readonly var p = ref s.Players[i];
             if (ControlHints[i] == null || !ShowControlHints) continue; // bots have no controls to show
-            string text = HintText(i, p.Role);
-            bool left = p.Team == 0;
+            int side = p.Team == 0 ? 0 : 1;
+            bool shared = perSide[side] > 1;
+            string text = HintText(i, p.Role, compact: shared);
+            bool left = side == 0;
             if (left) hintLeft = true; else hintRight = true;
-            Text(dl, text, left ? 14 : windowW - 14, by, 14, TeamColor[p.Team].Scale(0.85f), center: false, rightAlign: !left);
+            var color = TeamColor[p.Team].Scale(0.85f);
+            if (drawn[side]++ == 0) Text(dl, text, left ? 14 : windowW - 14, by, shared ? 12.5f : 14, color, center: false, rightAlign: !left);
+            else Text(dl, text, left ? cx - 14 : cx + 14, by, 12.5f, color, center: false, rightAlign: left);
         }
         // Keep the debug hint out of the way of long control hints: use a free side when there is one.
         var dim = new Color4(0.45f, 0.47f, 0.52f);
         if (!hintRight) Text(dl, "F1 debug · Esc menu", windowW - 14, by, 13, dim, rightAlign: true);
         else if (!hintLeft) Text(dl, "F1 debug · Esc menu", 14, by, 13, dim);
-        else Text(dl, "F1 debug · Esc menu", cx, by, 13, dim, center: true);
+        else if (perSide[0] < 2 && perSide[1] < 2) Text(dl, "F1 debug · Esc menu", cx, by, 13, dim, center: true);
 
         // Player labels above Dodgers (tells teammates apart in 2v2+).
         for (int i = 0; i < s.PlayerCount; i++)
@@ -750,14 +760,21 @@ public sealed class GameRenderer
         }
     }
 
-    private readonly string?[,] _hintCache = new string?[SimState.MaxPlayers, 2];
+    private readonly string?[,] _hintCache = new string?[SimState.MaxPlayers, 4];
 
     /// <summary>Bottom-bar control hint for a player in a role; built once, then cached (no per-frame allocation).</summary>
-    private string HintText(int player, PlayerRole role)
+    private string HintText(int player, PlayerRole role, bool compact = false)
     {
-        ref string? cached = ref _hintCache[player, (int)role];
+        ref string? cached = ref _hintCache[player, (int)role + (compact ? 2 : 0)];
         if (cached != null) return cached;
         var h = ControlHints[player]!;
+        if (compact && h.Length >= 6)
+        {
+            cached = role == PlayerRole.Dodger
+                ? $"P{player + 1}: {h[0]} · {h[4]} flip · {h[5]} break"
+                : $"P{player + 1}: {h[0]} aim · {h[2]} · {h[5]} overdrive";
+            return cached;
+        }
         cached = role == PlayerRole.Dodger
             ? h.Length >= 6
                 ? $"P{player + 1} Dodger: {h[0]} move · {h[1]} focus · {h[4]} flip · {h[5]} break"

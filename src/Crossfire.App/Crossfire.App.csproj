@@ -13,5 +13,10 @@
   <ItemGroup>
     <!-- Kenney CC0 art + fonts, copied next to the executable. -->
     <Content Include="..\..\assets\kenney\**\*" LinkBase="assets\kenney" CopyToOutputDirectory="PreserveNewest" />
+    <!-- BRUTAL License v1.0: the official logo (2.2, startup splash), NOTICE.txt (2.3) and the third-party licences (4.0)
+         ship next to the executable in every build. -->
+    <Content Include="..\..\assets\brutal\**\*" LinkBase="assets\brutal" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\NOTICE.txt" Link="NOTICE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\licenses\*.txt" LinkBase="LICENSES" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

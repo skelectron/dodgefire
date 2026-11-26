@@ -3,17 +3,25 @@
 Competitive team bullet-hell PvP on one split arena, built in C# / .NET 10 on the BRUTAL framework (Vulkan).
 Dodgers survive in their own half; Gunners place telegraphed bullet patterns in the enemy half.
 
-Status: **Phases 0–4 done**, plus Kenney art, bots and a title menu. You can play against a bot, against a friend on one keyboard, or watch Bot vs Bot. Next up are Phase 5 (gamepads, lobby, 2v2) and Phase 6 (graze Super, audio, splash, licence notices).
+Status: **Phases 0–6 done**. You can play against bots, play with up to 3 friends on one PC (mouse, both halves of the keyboard and gamepads), or watch Bot vs Bot. `tools/publish.ps1` makes a ready-to-upload Windows build. Next is Phase 7: combo patterns and a 30,000-bullet stress pass in 4v4.
 
 ## Modes and bots
 
 The title menu works with mouse or keyboard and has two pages. First you pick a mode: hovering only highlights, and a click (or Enter) opens that mode's options page. That page lists only the settings that mode uses, plus START and BACK. Settings change only when you click them or press Left/Right. The modes are:
-- **Team 4v4:** you and 3 bot teammates against 4 bots. Each team has 2 Dodgers and 2 Gunners. You pick your role (Dodger or Gunner), your bot teammates fill the other slots, and roles stay fixed for the whole match.
+- **Team 4v4:** you and 3 bot teammates against 4 bots. Each team has 2 Dodgers and 2 Gunners. You pick your role (Dodger or Gunner), and your bot teammates fill the other slots. **ROLES** decides whether roles stay **FIXED** (the default) or **SWAP EACH ROUND**, so every Dodger becomes a Gunner and back. Local 2v2 has the same setting; with swapping on, every lobby seat picks a pattern loadout.
 - **Vs Bot:** 1v1 against a bot. You pick your starting role, and roles swap every round.
-- **Local 1v1:** two players on one machine. P1 uses the mouse or the left side of the keyboard, P2 the right side.
+- **Local 1v1:** two players on one machine. P1 uses the mouse, a gamepad or the left side of the keyboard; P2 a second gamepad or the right side of the keyboard.
+- **Local 2v2:** up to 4 players on one PC, best of 3. START on the options page opens a **lobby** with four seats: blue Dodger, blue Gunner, red Dodger, red Gunner. Each device joins on its own: click a seat (mouse), Space (WASD keys), Enter (arrow keys) or A (gamepad).
+  - Left/Right changes seat.
+  - Up/Down picks a Gunner seat's patterns: Classic, Hunter, Trapper, or Custom (the GUNNER PATTERNS row).
+  - Press the join key again to mark yourself ready.
+  - Right click, X, Right Ctrl or B un-readies you, or leaves the seat if you weren't ready.
+  - When everyone seated is ready, press the join key again or click START.
+
+  Empty seats are bots of the chosen difficulty. Roles stay fixed unless ROLES is set to swap. Pads can be plugged in while the lobby is open; unplugging one frees its seat.
 - **Bot vs Bot:** watch two bots play.
 
-Settings: **controls** (Mouse is the default, or Keyboard) and **bot difficulty** (Easy, Normal or Hard). A live Bot vs Bot match runs behind the menu. Esc returns to the menu.
+Settings: **controls** (Mouse is the default; Keyboard or Gamepad) and **bot difficulty** (Easy, Normal or Hard). A live Bot vs Bot match runs behind the menu. Esc returns to the menu.
 
 Bots live in `src/Crossfire.Sim/Bots`. They are deterministic: integer maths plus their own seeded RNG, and their output is a normal `SimInput`, so replays and future netcode are unaffected.
 - **Dodger bot:** searches 9 directions × focus/no focus over a short horizon, predicting bullets linearly. It avoids danger and walls and is pulled toward the centre.
@@ -31,6 +39,16 @@ dotnet run -c Release --project tests/Crossfire.Benchmarks -- --filter "*"
 
 Needs a Vulkan 1.3 driver. Install the Vulkan SDK if you want `--validate`.
 
+Every launch starts with a short splash: the BRUTAL logo, then the CROSSFIRE title. After 1.2 s, a key, click or gamepad button skips it. The BRUTAL licence requires the logo before gameplay, so the splash has no off switch.
+
+### Release build (itch.io or anywhere)
+
+```sh
+powershell -ExecutionPolicy Bypass -File tools\publish.ps1
+```
+
+This builds a self-contained Windows x64 release in `artifacts/crossfire-win-x64-<commit>/` (with `CROSSFIRE.exe`) and zips it next to that folder (about 42 MB). Players don't need .NET installed. The script refuses to package a build that is missing `NOTICE.txt`, `LICENSES/`, the BRUTAL logo or the Kenney assets. It never uploads anything.
+
 | Flag | Effect |
 |---|---|
 | `--validate` | Vulkan validation layers (when installed) |
@@ -44,7 +62,7 @@ Needs a Vulkan 1.3 driver. Install the Vulkan SDK if you want `--validate`.
 | `--keyboard` | Use keyboard controls instead of the mouse for `--mode` |
 | `--replay <file>` | Watch a saved replay (e.g. `replays/last.cfreplay`) |
 | `--difficulty easy\|normal\|hard` | Bot difficulty for `--mode` |
-| `--2v2` | 2v2 layout; slots 3–4 are bots until Phase 5 adds gamepads |
+| `--2v2` | 2v2 layout for `--mode vsbot\|local`. Slots 3–4 go to connected gamepads, otherwise to bots. The menu's Local 2v2 lobby is the usual way to play 2v2. |
 | `--seed N` | RNG seed |
 
 ## Controls
@@ -62,6 +80,22 @@ Needs a Vulkan 1.3 driver. Install the Vulkan SDK if you want `--validate`.
 | Rematch | Left click | Left click |
 
 The pointer position is sent to the simulation as a target in quarter-unit precision, so replays stay deterministic. The ship moves straight toward it and lands exactly on it, at up to `DodgerPointerSpeed` (10 units per tick, about 2.2× keyboard speed). That cap stays below 2 × (hitbox + smallest bullet radius) = 11, so a fast flick can't skip over a bullet between ticks. The Gunner reticle is capped at 80 units per tick, so it effectively sticks to the pointer. Mouse players are drawn at their latest simulated position, without the usual interpolation, so they don't trail the pointer by a frame. The OS cursor is hidden during a match and replaced by a small reticle; it comes back when the F1 panel is open.
+
+### Gamepad
+
+Any pad GLFW has a mapping for works: XInput pads, DualShock/DualSense, Switch Pro and most others. Pads can be connected at any time.
+
+| | Dodger | Gunner |
+|---|---|---|
+| Move / aim | Left stick or d-pad (pushing part-way moves slower) | Left or right stick, or d-pad |
+| Focus | LB or LT | LB or LT (slow aim) |
+| Flip | A | |
+| Patterns 1–4 | | A, B, X, Y |
+| Break / Overdrive | RB or RT | RB or RT |
+| Rematch | Start or A | Start or A |
+| Leave the match (like Esc) | Back / Select | Back / Select |
+
+The sticks have a 20% radial dead zone, rescaled so movement starts slow and diagonals keep their angle. Menus work with the d-pad or stick: A confirms, B goes back. When a mouse player shares the keyboard with keyboard players, Shift and the number keys belong to the keyboard players, and the mouse player focuses with the middle button.
 
 ### Keyboard (one keyboard, two players; in 1v1 roles swap every round)
 
@@ -128,7 +162,7 @@ Sound effects and music play through SDL3_mixer (BRUTAL bindings). Sounds follow
 
 - `src/Crossfire.Sim`: pure deterministic simulation. Q16.16 `Fix` math with a checked-in sine table, a seeded RNG, an SoA bullet pool in `Brutal.Memory`, and patterns, collision and rules. It has no floats, no time and no rendering.
 - `src/Crossfire.Render`: Vulkan context, an instanced SDF `SpriteBatch` (one draw call for the whole arena), ImGui/ImPlot layer, and `GameRenderer`.
-- `src/Crossfire.Input`: keyboard schemes and mouse → `SimInput`.
+- `src/Crossfire.Input`: keyboard, mouse and gamepad → `SimInput`, plus the pure lobby seat logic.
 - `src/Crossfire.Audio`: SDL3_mixer sound effects and music, driven by simulation events.
 - `src/Crossfire.App`: window, fixed 60 Hz loop with render interpolation, debug UI, perf log.
 - `tests/`: xUnit tests and BenchmarkDotNet benchmarks.
@@ -146,4 +180,12 @@ Sound effects and music play through SDL3_mixer (BRUTAL bindings). Sounds follow
 ## Credits
 
 - Art, font and audio: [Kenney](https://www.kenney.nl): Space Shooter Remastered, Kenney Fonts, Sci-Fi Sounds, Interface Sounds, UI Audio, Digital Audio, Music Jingles and Music Loops. All CC0; see `assets/kenney/*/license*.txt` and `assets/kenney/audio/SOURCES.txt`.
-- Built with BRUTAL by Ahwoo Limited.
+- Built with BRUTAL. BRUTAL game development framework is Copyright (c) 2024 Ahwoo Limited (www.ahwoo.com/brutal).
+- In-game: **CREDITS** on the title menu lists BRUTAL, Kenney and every third-party component.
+
+### Licence checklist (BRUTAL License v1.0)
+
+- [x] **2.1** The BRUTAL copyright notice is on the credits page and the splash.
+- [x] **2.2** The official BRUTAL logo shows before gameplay on every launch, unaltered except for scaling: an exact 4:1 box downscale of `LOGO_BRUTAL_WHT.png`. It can only be skipped after 1.2 s. Source: `assets/brutal/SOURCE.txt`.
+- [x] **2.3** `NOTICE.txt` ships next to the executable (copied by the build, and checked by `tools/publish.ps1`).
+- [x] **4.0** The third-party licences from each BRUTAL package's `LICENSES/` are checked in under `licenses/` and ship as `LICENSES/`, together with the BRUTAL License itself.
