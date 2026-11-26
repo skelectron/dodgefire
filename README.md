@@ -3,7 +3,12 @@
 Competitive team bullet-hell PvP on one split arena, built in C# / .NET 10 on the BRUTAL framework (Vulkan).
 Dodgers survive in their own half; Gunners place telegraphed bullet patterns in the enemy half.
 
-Status: **Phases 0–7 done**. You can play against bots, play with up to 3 friends on one PC (mouse, both halves of the keyboard and gamepads), or watch Bot vs Bot. Teammate Gunners can link **crossfire combos**, and 4v4 holds a locked 60 FPS with 30,000 bullets on an Intel HD 620. `tools/publish.ps1` makes a ready-to-upload Windows build. Phase 8 (online play) is next and needs its own plan.
+Status: **Phases 0–8 built**.
+- **Play:** against bots, with up to 3 friends on one PC (mouse, both halves of the keyboard and gamepads), or **online with up to 8 players** (rollback netcode, bots fill empty seats). You can also watch Bot vs Bot.
+- **Team play:** teammate Gunners can link **crossfire combos**.
+- **Performance:** 4v4 holds a locked 60 FPS with 30,000 bullets on an Intel HD 620.
+- **Release:** `tools/publish.ps1` makes a ready-to-upload Windows build.
+- **Still needed:** online play has only been tested on one PC. A real internet match is the last check.
 
 ## Modes and bots
 
@@ -61,6 +66,10 @@ This builds a self-contained Windows x64 release in `artifacts/crossfire-win-x64
 | `--role dodger\|gunner` | Your role for `--mode team` (your starting role for `vsbot`) |
 | `--keyboard` | Use keyboard controls instead of the mouse for `--mode` |
 | `--replay <file>` | Watch a saved replay (e.g. `replays/last.cfreplay`) |
+| `--host [port]` | Host an online game (default UDP port 47820) and go straight to the lobby |
+| `--join <ip[:port]>` | Join an online game |
+| `--bind <ip>` | Host only on this address (e.g. `127.0.0.1` for two windows on one PC, with no firewall prompt) |
+| `--net-sim lag=80,jitter=20,loss=5` | Add simulated lag, jitter and packet loss to your online traffic (also adjustable in F1) |
 | `--difficulty easy\|normal\|hard` | Bot difficulty for `--mode` |
 | `--2v2` | 2v2 layout for `--mode vsbot\|local`. Slots 3–4 go to connected gamepads, otherwise to bots. The menu's Local 2v2 lobby is the usual way to play 2v2. |
 | `--seed N` | RNG seed |
@@ -149,6 +158,60 @@ Every number is a rule, live-tunable in F1 (radius, spacing, gap, speed, refund,
 
 All of the numbers are live-tunable in the F1 debug panel.
 
+## Online (Phase 8)
+
+Choose **ONLINE** on the title menu.
+
+**Hosting**
+- **HOST A GAME** opens the lobby and shows your addresses.
+- On a LAN, friends join your LAN address.
+- Over the internet, **forward UDP port 47820** on your router to your PC, then give friends your public IP (search "what is my ip").
+- Windows asks once whether CROSSFIRE may use the network; allow it.
+- Only the host needs a forwarded port; everyone else just joins.
+
+**Joining**
+- Type the address (`ip` or `ip:port`) and press **JOIN**.
+- The last address is remembered.
+
+**Lobby**
+- **The host decides:** the mode (1v1, 2v2 or 4v4), bot difficulty and ROLES (fixed or swap each round; 1v1 always swaps). The host starts the match once every seated player is ready.
+- **Everyone:** clicks a free seat to sit there. Clicking your own Gunner seat changes your patterns (Classic, Hunter, Trapper, or Custom from the title menu), then you press READY.
+- **Seats:** empty seats are played by bots, which run on the host. Each PC plays with one device: mouse, keyboard or gamepad (YOUR CONTROLS). Players without a seat watch.
+
+**During a match**
+- **Ping** shows at the top.
+- **"WAITING FOR P3"** appears when a player's inputs are late by more than the rollback window. The game holds instead of guessing.
+- **Leaving:** Esc leaves the game. If a player leaves or drops, their seat becomes a bot within a few seconds, for everyone at once. If the host leaves, the game ends with a message.
+- **After the match:**
+  - The host gets REMATCH and LOBBY.
+  - Clients get WATCH REPLAY and LEAVE.
+  - Everyone has the same stats and the same replay (`replays/last.cfreplay`).
+
+**How it works**
+- Only inputs travel over the network (8 bytes per player per tick). Every PC simulates the whole match with the deterministic integer simulation.
+- **Rollback netcode:**
+  - Your inputs play 2 ticks (33 ms) late.
+  - Other players' late inputs are **predicted** (their last input repeated). When the real input differs, the game **rolls back** to a snapshot and re-simulates, up to 8 ticks (133 ms).
+  - Sounds and effects are not repeated after a rollback.
+  - Stats, replays and the desync check only use **confirmed** ticks, where every input is known.
+- **Star topology:** clients talk only to the host, which relays every input to everyone. Each packet repeats every input not yet acknowledged, so a lost packet is repaired by the next one.
+- **Time sync:** a PC running ahead of the others slows down slightly.
+- **Desync check:** every 30 confirmed ticks, each client sends a hash of its state to the host. If they differ, the match stops with "DESYNC AT TICK N", and each PC saves `replays/desync-*.cfreplay` for comparison. That should never happen; please send the files if it does.
+- Every 10 s the console logs `[net] confirmed tick … hash …`. Identical lines on every PC mean the match is in sync.
+- **F1** shows a Net panel online: ping, rollbacks, frame advantage, bandwidth and simulated-lag sliders. Anything that would change the game outside of inputs (tuning, pause, god mode, stress) is hidden online.
+
+**Code**
+- `src/Crossfire.Net`:
+  - `RollbackSession`: prediction, snapshots, rollback, confirmed ticks.
+  - `NetMatch`: input relay, acks, RTT, time sync, desync check, players turning into bots.
+  - `OnlineSession`: handshake with a build check, lobby, match start.
+  - `RakNetTransport` (Brutal.RakNet), `LoopbackNetwork` (in-process network for tests, with lag/jitter/loss) and `ConditionedTransport` (`--net-sim`).
+- **Tests:**
+  - 2, 4 and 8 peers over a lossy, jittery loopback must match a plain run exactly.
+  - A deliberately diverging peer is caught by the desync check.
+  - Real-UDP RakNet tests on 127.0.0.1.
+- **Measured worst case:** a full 8-tick rollback on every tick with 30,000 bullets costs 1.8 ms per tick on average and at most 5.4 ms.
+
 ## Results, stats and replays
 
 When a match ends, a **results screen** shows each player's lives lost and taken, grazes, flips and blocks, breaks, patterns placed and Overdrives, and marks an MVP. From there you can pick **REMATCH**, **WATCH REPLAY** or **MENU**.
@@ -177,6 +240,7 @@ Sound effects and music play through SDL3_mixer (BRUTAL bindings). Sounds follow
 - `src/Crossfire.Render`: Vulkan context, an instanced SDF `SpriteBatch` (one draw call for the whole arena), ImGui/ImPlot layer, and `GameRenderer`.
 - `src/Crossfire.Input`: keyboard, mouse and gamepad → `SimInput`, plus the pure lobby seat logic.
 - `src/Crossfire.Audio`: SDL3_mixer sound effects and music, driven by simulation events.
+- `src/Crossfire.Net`: online play (rollback session, match protocol, lobby, RakNet and loopback transports).
 - `src/Crossfire.App`: window, fixed 60 Hz loop with render interpolation, debug UI, perf log.
 - `tests/`: xUnit tests and BenchmarkDotNet benchmarks.
 

@@ -23,7 +23,18 @@ internal sealed class ResultsScreen
     }
 
     private static readonly string[] Columns = ["LIVES LOST", "LIVES TAKEN", "GRAZES", "FLIPS/BLOCKS", "BREAKS", "PATTERNS", "OVERDRIVES", "COMBOS"];
-    private static readonly string[] ButtonNames = ["REMATCH", "WATCH REPLAY", "MENU"];
+    private static readonly string[] OfflineButtons = ["REMATCH", "WATCH REPLAY", "MENU"];
+    private static readonly string[] HostButtons = ["REMATCH", "WATCH REPLAY", "LOBBY"];
+    private static readonly string[] ClientButtons = ["WAITING FOR HOST", "WATCH REPLAY", "LEAVE"];
+    private string[] _buttonNames = OfflineButtons;
+    private bool _rematchAllowed = true;
+
+    /// <summary>Online role for the next <see cref="Open"/>: 0 offline, 1 host (rematch / lobby), 2 client (leave; the host decides).</summary>
+    public void SetOnlineRole(int role)
+    {
+        _buttonNames = role switch { 1 => HostButtons, 2 => ClientButtons, _ => OfflineButtons };
+        _rematchAllowed = role != 2;
+    }
 
     private readonly KeyboardInput _keyboard;
     private readonly MouseInput _mouse;
@@ -64,7 +75,7 @@ internal sealed class ResultsScreen
         IsOpen = true;
         _time = 0;
         _replayAvailable = replayAvailable;
-        _focus = 0;
+        _focus = _rematchAllowed ? 0 : 2;
         _leftWas = true;
         _held.Clear();
         foreach (var k in Keys) if (_keyboard.IsDown(k)) _held.Add(k);
@@ -143,7 +154,7 @@ internal sealed class ResultsScreen
         return _focus switch { 0 => Action.Rematch, 1 => Action.Replay, _ => Action.Menu };
     }
 
-    private bool Enabled(int b) => b != 1 || _replayAvailable;
+    private bool Enabled(int b) => b == 1 ? _replayAvailable : b != 0 || _rematchAllowed;
 
     private int Next(int from, int dir)
     {
@@ -212,7 +223,7 @@ internal sealed class ResultsScreen
             if (!enabled) bg = new Color4(1f, 1f, 1f, 0.03f);
             Fill(dl, bx, by, bw, bh, bg);
             var tc = !enabled ? new Color4(0.4f, 0.4f, 0.45f) : focused ? new Color4(1f, 0.95f, 0.75f) : new Color4(0.85f, 0.87f, 0.93f);
-            r.Label(dl, ButtonNames[b], bx + bw * 0.5f, by + 11, 18, tc, center: true);
+            r.Label(dl, _buttonNames[b], bx + bw * 0.5f, by + 11, _buttonNames[b].Length > 12 ? 14 : 18, tc, center: true);
         }
         if (!_replayAvailable)
             r.Label(dl, "replay unavailable: debug tools changed the match", cx, by + bh + 4, 11, new Color4(0.5f, 0.5f, 0.55f), center: true);

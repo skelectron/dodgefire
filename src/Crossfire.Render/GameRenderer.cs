@@ -129,11 +129,14 @@ public sealed class GameRenderer
     private static float Lerp(float a, float b, float t) => a + (b - a) * t;
 
     /// <summary>Call after every simulation step to turn sim events into effects.</summary>
-    public void ConsumeEvents(SimState s)
+    public void ConsumeEvents(SimState s) => ConsumeEvents(s, s.Events.AsSpan(0, s.EventCount));
+
+    /// <summary>Turns events into effects; <paramref name="s"/> only supplies the rules (online: events come from the rollback session).</summary>
+    public void ConsumeEvents(SimState s, ReadOnlySpan<SimEvent> events)
     {
-        for (int i = 0; i < s.EventCount; i++)
+        for (int i = 0; i < events.Length; i++)
         {
-            ref readonly var e = ref s.Events[i];
+            ref readonly var e = ref events[i];
             float x = F(e.Pos.X), y = F(e.Pos.Y);
             switch (e.Type)
             {

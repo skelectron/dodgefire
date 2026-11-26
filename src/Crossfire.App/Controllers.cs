@@ -14,6 +14,8 @@ public enum ControllerKind
     KeyboardAny,
     /// <summary>Single human on the mouse (pointer steers, clicks act, wheel picks patterns).</summary>
     Mouse,
+    /// <summary>Another player's seat in an online match (their inputs arrive over the network).</summary>
+    Remote,
     /// <summary>A gamepad (<see cref="SlotController.Pad"/>; -1 = whichever pad is connected first).</summary>
     Gamepad,
     Bot,
@@ -31,6 +33,8 @@ public enum GameMode
     LocalTeam,
     /// <summary>Bots only (also the attract mode behind the title menu).</summary>
     Demo,
+    /// <summary>Online over RakNet (host or join by IP); handled by the online screen, not MatchSetups.</summary>
+    Online,
 }
 
 public enum ControlScheme
@@ -77,6 +81,7 @@ public sealed class SlotController(ControllerKind kind, BotDifficulty difficulty
     public SimInput Read(SimState s, int slot, KeyboardInput keyboard, MouseInput mouse, GamepadInput pads, bool keyboardBlocked, bool mouseBlocked) => Kind switch
     {
         ControllerKind.Bot => BotController.Think(s, slot, ref Brain),
+        ControllerKind.Remote => default,
         ControllerKind.Mouse => keyboardBlocked && mouseBlocked ? default : mouse.Read(s, slot, mouseBlocked),
         // Pads are not blocked by ImGui (it does not use them).
         ControllerKind.Gamepad => pads.Read(Pad >= 0 ? Pad : pads.FirstConnected, s.Players[slot].Role),
@@ -104,6 +109,7 @@ public sealed class SlotController(ControllerKind kind, BotDifficulty difficulty
         ControllerKind.KeyboardAny => "Keyboard",
         ControllerKind.Mouse => "Mouse",
         ControllerKind.Gamepad => Pad >= 0 ? $"Pad {Pad + 1}" : "Gamepad",
+        ControllerKind.Remote => "Online",
         _ => $"Bot ({Difficulty})",
     };
 
@@ -115,6 +121,7 @@ public sealed class SlotController(ControllerKind kind, BotDifficulty difficulty
         ControllerKind.KeyboardAny => "KEYS",
         ControllerKind.Mouse => "MOUSE",
         ControllerKind.Gamepad => Pad >= 0 ? $"PAD {Pad + 1}" : "PAD",
+        ControllerKind.Remote => "ONLINE",
         _ => "BOT",
     };
 

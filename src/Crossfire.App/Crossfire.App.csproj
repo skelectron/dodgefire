@@ -9,6 +9,7 @@
     <ProjectReference Include="..\Crossfire.Input\Crossfire.Input.csproj" />
     <ProjectReference Include="..\Crossfire.Render\Crossfire.Render.csproj" />
     <ProjectReference Include="..\Crossfire.Audio\Crossfire.Audio.csproj" />
+    <ProjectReference Include="..\Crossfire.Net\Crossfire.Net.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Kenney CC0 art + fonts, copied next to the executable. -->

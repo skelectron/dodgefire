@@ -44,12 +44,15 @@ public sealed class MatchStats
         PlayTicks = 0;
     }
 
-    public void Consume(SimState s)
+    public void Consume(SimState s) => Consume(s, s.Events.AsSpan(0, s.EventCount));
+
+    /// <summary>Same as <see cref="Consume(SimState)"/> with the tick's events given separately (online: confirmed ticks).</summary>
+    public void Consume(SimState s, ReadOnlySpan<SimEvent> events)
     {
         PlayerCount = s.PlayerCount;
-        for (int i = 0; i < s.EventCount; i++)
+        for (int i = 0; i < events.Length; i++)
         {
-            ref readonly var e = ref s.Events[i];
+            ref readonly var e = ref events[i];
             switch (e.Type)
             {
                 case SimEventType.Hit or SimEventType.Death:

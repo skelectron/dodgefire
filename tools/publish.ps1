@@ -28,6 +28,9 @@ $required = @(
     "LICENSES\BRUTAL-LICENSE.txt",
     "LICENSES\BRUTAL-GLFW-THIRD-PARTY-NOTICES.txt",
     "LICENSES\BRUTAL-SDL-MIXER-THIRD-PARTY-NOTICES.txt",
+    "LICENSES\BRUTAL-RAKNET-THIRD-PARTY-NOTICES.txt",
+    "LICENSES\DOTNET-LICENSE.txt",
+    "RakNetDLL.dll",
     "assets\brutal\LOGO_BRUTAL_WHT.png",
     "assets\kenney\space-shooter\license.txt",
     "assets\kenney\audio\music_menu.ogg"

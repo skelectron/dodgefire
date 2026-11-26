@@ -12,6 +12,7 @@
     <PackageVersion Include="Ahwoo.BRUTAL.Stb" Version="2026.10.3" />
     <PackageVersion Include="Ahwoo.BRUTAL.Sdl" Version="2026.10.3" />
     <PackageVersion Include="Ahwoo.BRUTAL.Sdl.Mixer" Version="2026.10.3" />
+    <PackageVersion Include="Ahwoo.BRUTAL.RakNet" Version="2026.10.3" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.2" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

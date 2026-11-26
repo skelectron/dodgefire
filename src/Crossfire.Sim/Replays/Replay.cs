@@ -164,17 +164,20 @@ public sealed class ReplayRecorder
 
     public void MarkNotReplayable() => Replayable = false;
 
-    public void Record(SimState s, ReadOnlySpan<SimInput> inputs)
+    public void Record(SimState s, ReadOnlySpan<SimInput> inputs) => Record(in s.Rules, s.Phase, inputs);
+
+    /// <summary>Records one tick from the rules and phase in effect before it (online: confirmed ticks, state not at hand).</summary>
+    public void Record(in MatchRules rules, MatchPhase phaseBefore, ReadOnlySpan<SimInput> inputs)
     {
         if (!Active) return;
-        if (!RulesEqual(in s.Rules, in _lastRules))
+        if (!RulesEqual(in rules, in _lastRules))
         {
-            _lastRules = s.Rules;
-            _ruleChanges.Add((_ticks, s.Rules));
+            _lastRules = rules;
+            _ruleChanges.Add((_ticks, rules));
         }
         // A rematch started from the match-over screen: the replay will begin here.
-        if (_lastPhase == MatchPhase.MatchOver && s.Phase != MatchPhase.MatchOver) _matchStartTick = _ticks;
-        _lastPhase = s.Phase;
+        if (_lastPhase == MatchPhase.MatchOver && phaseBefore != MatchPhase.MatchOver) _matchStartTick = _ticks;
+        _lastPhase = phaseBefore;
 
         int chunk = _ticks / ChunkTicks, at = _ticks % ChunkTicks;
         if (chunk == _chunks.Count) _chunks.Add(new SimInput[ChunkTicks * _players]);

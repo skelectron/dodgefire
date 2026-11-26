@@ -176,13 +176,15 @@ public sealed unsafe class AudioSystem : IDisposable
     }
 
     /// <summary>Turns this tick's simulation events into sounds.</summary>
-    public void ConsumeEvents(SimState s)
+    public void ConsumeEvents(SimState s) => ConsumeEvents(s.Events.AsSpan(0, s.EventCount));
+
+    public void ConsumeEvents(ReadOnlySpan<SimEvent> events)
     {
         if (!Enabled || Muted) return;
         const float inv = 1f / Fix.OneRaw;
-        for (int i = 0; i < s.EventCount; i++)
+        for (int i = 0; i < events.Length; i++)
         {
-            ref readonly var e = ref s.Events[i];
+            ref readonly var e = ref events[i];
             float x = e.Pos.X.Raw * inv;
             switch (e.Type)
             {

@@ -13,5 +13,6 @@
     <ProjectReference Include="..\..\src\Crossfire.Sim\Crossfire.Sim.csproj" />
     <!-- Pure input logic only (gamepad mapping, lobby); no window or GLFW calls in tests. -->
     <ProjectReference Include="..\..\src\Crossfire.Input\Crossfire.Input.csproj" />
+    <ProjectReference Include="..\..\src\Crossfire.Net\Crossfire.Net.csproj" />
   </ItemGroup>
 </Project>

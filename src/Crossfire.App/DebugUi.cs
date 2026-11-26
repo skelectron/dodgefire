@@ -96,6 +96,14 @@ internal sealed class DebugUi(string deviceName, bool validation)
             ImPlot.EndPlot();
         }
 
+        if (Online is { } net)
+        {
+            // Online: anything that edits the state outside of inputs would desync the match, so only stats here.
+            DrawNet(net);
+            ImGui.End();
+            return;
+        }
+
         if (ImGui.CollapsingHeader("Match & stress", ImGuiTreeNodeFlags.DefaultOpen))
         {
             bool paused = Paused;
@@ -219,6 +227,40 @@ internal sealed class DebugUi(string deviceName, bool validation)
         }
 
         ImGui.End();
+    }
+
+    /// <summary>Set during an online match: the panel shows network stats and hides everything that edits the state.</summary>
+    public Crossfire.Net.NetMatch? Online { get; set; }
+    /// <summary>Simulated network trouble applied on top of the real connection (--net-sim), editable live.</summary>
+    public Crossfire.Net.ConditionedTransport? NetSim { get; set; }
+
+    private void DrawNet(Crossfire.Net.NetMatch net)
+    {
+        if (!ImGui.CollapsingHeader("Net", ImGuiTreeNodeFlags.DefaultOpen)) return;
+        var s = net.Session;
+        ImGui.Text($"{(net.IsHost ? "host" : $"client (peer {net.LocalPeer})")}  ·  tick {s.CurrentTick}  ·  confirmed {s.ConfirmedTick}  ·  input delay {s.Options.InputDelay}  ·  window {s.Options.Window}");
+        if (net.IsHost)
+        {
+            for (int p = 1; p < 8; p++)
+            {
+                double ping = net.PingMs(p);
+                if (ping > 0) ImGui.Text($"peer {p}: ping {ping:0} ms");
+            }
+        }
+        else ImGui.Text($"ping to host {net.PingMs(0):0} ms");
+        ImGui.Text($"rollbacks {s.Rollbacks} (last depth {s.LastRollbackDepth}, max {s.MaxRollbackDepth}), resimulated {s.ResimulatedTicks} ticks");
+        ImGui.Text($"frame advantage {net.FrameAdvantage:+0.00;-0.00} ticks  ·  sent {net.BytesSent / 1024} KiB  ·  received {net.BytesReceived / 1024} KiB");
+        if (net.Desynced) ImGui.Text($"DESYNC at tick {net.DesyncTick}");
+        if (NetSim is { } sim)
+        {
+            var c = sim.Conditions;
+            int lag = c.LatencyMs, jitter = c.JitterMs, loss = c.LossPercent;
+            bool changed = ImGui.SliderInt("extra lag (ms)", ref lag, 0, 300, "%d", ImGuiSliderFlags.None);
+            changed |= ImGui.SliderInt("jitter (ms)", ref jitter, 0, 100, "%d", ImGuiSliderFlags.None);
+            changed |= ImGui.SliderInt("loss (%)", ref loss, 0, 30, "%d", ImGuiSliderFlags.None);
+            if (changed) sim.Conditions = c with { LatencyMs = lag, JitterMs = jitter, LossPercent = loss };
+        }
+        else ImGui.Text("start with --net-sim lag=80,jitter=20,loss=5 to add simulated lag");
     }
 
     public void DrawSpriteStress(SpriteBatch batch, SimState s)

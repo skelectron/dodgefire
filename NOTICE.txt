@@ -23,6 +23,12 @@ listed, with its licences in full, in LICENSES/:
   BRUTAL-STB-THIRD-PARTY-NOTICES.txt                  stb_image, stb_image_write
   BRUTAL-OPENGL-THIRD-PARTY-NOTICES.txt               glad, Khronos OpenGL specifications, khrplatform.h
   BRUTAL-LOCALIZATION-THIRD-PARTY-NOTICES.txt         ResX.NET
+  BRUTAL-RAKNET-THIRD-PARTY-NOTICES.txt               RakNet, Mersenne Twister MT19937, DR_SHA1, SLikeNet
+
+.NET components shipped with the game (MIT):
+
+  DOTNET-LICENSE.txt, DOTNET-THIRD-PARTY-NOTICES.txt  .NET runtime and Microsoft.Extensions libraries
+  COMMUNITYTOOLKIT-HIGHPERFORMANCE-LICENSE.txt         .NET Community Toolkit (HighPerformance)
 
 Art, font, sound effects and music: Kenney (www.kenney.nl), released under
 Creative Commons Zero (CC0). Licence files: assets/kenney/space-shooter/license.txt

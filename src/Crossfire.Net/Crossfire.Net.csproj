@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Online play: rollback session (pure, testable), wire protocol, transports. No rendering. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Crossfire.Sim\Crossfire.Sim.csproj" />
+    <PackageReference Include="Ahwoo.BRUTAL.RakNet" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Crossfire.Sim.Tests" />
+  </ItemGroup>
+</Project>

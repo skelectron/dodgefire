@@ -17,6 +17,7 @@ using Crossfire.Sim.Stats;
 //       --validate (Vulkan validation layers), --novsync, --seed N
 //       --stress N (keep ~N bullets alive), --sprites N (static sprite stress), --god (Dodgers invulnerable),
 //       --perf-log (stats to stdout every 5 s), --replay <file> (watch a saved replay)
+//       --host [port] (host an online game), --join <ip[:port]> (join one), --net-sim lag=80,jitter=20,loss=5 (simulated network trouble)
 
 bool validate = args.Contains("--validate");
 bool vsync = !args.Contains("--novsync");
@@ -41,6 +42,11 @@ GameMode? cliMode = modeArg switch
 };
 var startRole = StrArg("--role") == "gunner" ? Crossfire.Sim.Players.PlayerRole.Gunner : Crossfire.Sim.Players.PlayerRole.Dodger;
 var startControls = args.Contains("--keyboard") ? ControlScheme.Keyboard : ControlScheme.Mouse;
+int hostArgIndex = Array.IndexOf(args, "--host");
+ushort? hostPort = hostArgIndex < 0 ? null
+    : hostArgIndex + 1 < args.Length && ushort.TryParse(args[hostArgIndex + 1], out ushort hp) ? hp : Crossfire.Net.RakNetTransport.DefaultPort;
+string? joinAddress = StrArg("--join");
+var netSim = StrArg("--net-sim") is { } netSimText ? Crossfire.Net.NetConditions.Parse(netSimText) : default;
 int replayArgIndex = Array.IndexOf(args, "--replay");
 string? replayPath = replayArgIndex >= 0 && replayArgIndex + 1 < args.Length ? args[replayArgIndex + 1] : null;
 int IntArg(string name, int fallback)
@@ -80,6 +86,10 @@ var pads = new GamepadInput();
 var menu = new TitleMenu(keyboard, mouse, pads);
 menu.SetPatternCosts(Crossfire.Sim.Rules.MatchRules.Default);
 var results = new ResultsScreen(keyboard, mouse, pads);
+// Online: the connect/lobby screen, and the running online game (null when offline).
+var onlineScreen = new OnlineScreen(keyboard, mouse) { SimulatedNetwork = netSim, Controls = startControls, BindAddress = StrArg("--bind") };
+OnlineGame? online = null;
+bool onlineWasInMatch = false;
 var sim = new Simulation();
 var debug = new DebugUi(vk.DeviceName, vk.ValidationEnabled) { GodMode = args.Contains("--god"), SpriteStress = IntArg("--sprites", 0), Audio = audio };
 var perf = new PerfLog();
@@ -128,7 +138,7 @@ void StartMatch(MatchOptions options, Crossfire.Sim.PlayerSetup[]? layoutOverrid
     bool anyKeys = false;
     foreach (var c in controllers) anyKeys |= c.UsesKeyboard;
     mouse.KeysShared = anyKeys;
-    ApplyControllerLabels();
+    ApplyControllerLabels(state);
     recorder.Begin(state, matchSeed, layout);
     debug.Tampered = false;
     stats.Reset();
@@ -136,7 +146,7 @@ void StartMatch(MatchOptions options, Crossfire.Sim.PlayerSetup[]? layoutOverrid
     lastPhase = state.Phase;
 }
 
-void ApplyControllerLabels()
+void ApplyControllerLabels(SimState labelState)
 {
     var hints = new string[]?[controllers.Length];
     var tags = new string?[SimState.MaxPlayers];
@@ -156,9 +166,9 @@ void ApplyControllerLabels()
     {
         int bots = 0, people = 0;
         BotDifficulty d = BotDifficulty.Normal;
-        for (int i = 0; i < controllers.Length && i < state.PlayerCount; i++)
+        for (int i = 0; i < controllers.Length && i < labelState.PlayerCount; i++)
         {
-            if (state.Players[i].Team != team) continue;
+            if (labelState.Players[i].Team != team) continue;
             if (controllers[i].IsBot) { bots++; d = controllers[i].Difficulty; } else people++;
         }
         string level = d.ToString().ToUpperInvariant();
@@ -215,6 +225,29 @@ void ExitReplay()
     replayView = null;
 }
 
+void CreateOnline()
+{
+    online = new OnlineGame(onlineScreen.Session!, keyboard, mouse, pads, onlineScreen.Controls);
+    online.Session.HostRules = debug.Rules; // the host's F1 tuning carries into its online matches
+    debug.NetSim = online.Session.Transport as Crossfire.Net.ConditionedTransport;
+    onlineWasInMatch = false;
+}
+
+/// <summary>Leaves the online game (or reacts to it ending) and shows the online screen with the reason.</summary>
+void EndOnline(string? reason)
+{
+    if (online == null) return;
+    online.Dispose();
+    online = null;
+    debug.Online = null;
+    debug.NetSim = null;
+    results.SetOnlineRole(0);
+    results.Close();
+    ExitReplay();
+    if (!inMenu) OpenMenu();
+    onlineScreen.SessionEnded(reason);
+}
+
 Replay? cliReplay = null;
 if (replayPath != null)
 {
@@ -242,6 +275,16 @@ if (cliReplay is { } loaded)
 else if (inMenu) OpenMenu();
 else StartMatch(new MatchOptions(cliMode!.Value, startDifficulty, startRole, startControls));
 
+if (cliReplay == null && (hostPort != null || joinAddress != null))
+{
+    // --host / --join: straight to the online lobby (the attract match runs behind it).
+    if (!inMenu) OpenMenu();
+    onlineScreen.Open();
+    if (hostPort is ushort port) onlineScreen.Port = port;
+    var created = hostPort != null ? onlineScreen.Host() : onlineScreen.Join(joinAddress!);
+    if (created == OnlineScreen.Result.SessionCreated) CreateOnline();
+}
+
 const double TickSeconds = 1.0 / Crossfire.Sim.Rules.MatchRules.TicksPerSecond;
 var clock = Stopwatch.StartNew();
 double previous = clock.Elapsed.TotalSeconds;
@@ -250,6 +293,9 @@ bool f1Was = false, escWas = true;
 bool cursorHidden = false;
 const int CursorNormal = 0x00034001, CursorHidden = 0x00034002; // GLFW_CURSOR_NORMAL / GLFW_CURSOR_HIDDEN
 Action<SimState> onReplayStep = s => { renderer.ConsumeEvents(s); audio.ConsumeEvents(s); }; // cached: no per-frame closure
+// Online: effects and sounds for events not shown before (rollback re-simulation does not repeat them).
+Action<SimState, ReadOnlySpan<SimEvent>> onOnlineEvents = (s, events) => { renderer.ConsumeEvents(s, events); audio.ConsumeEvents(events); };
+bool desyncSaved = false;
 bool mWas = false;
 int menuFocus = menu.FocusSignature, menuValue = menu.ValueSignature, resultsFocus = -1;
 
@@ -308,10 +354,35 @@ while (!window.ShouldClose)
     bool esc = window.GetKey(GlfwKey.Escape) == GlfwKeyAction.Press;
     bool escPressed = esc && !escWas || !inMenu && (pads.AnyMenu & MenuActions.Escape) != 0; // pad Back/Select works like Esc
     escWas = esc;
-    if (inMenu)
+    bool onlineMatchRunning = online is { Session.Phase: Crossfire.Net.OnlinePhase.InMatch };
+    if (onlineScreen.IsOpen && !onlineMatchRunning)
+    {
+        // Online connect page / lobby over the attract match.
+        switch (onlineScreen.Update((float)frameDt, imgui.WantsMouse, imgui.WantsKeyboard))
+        {
+            case OnlineScreen.Result.Back:
+                online = null; // the screen already left (disposed) the session
+                debug.Online = null;
+                debug.NetSim = null;
+                onlineScreen.Close();
+                menu.Open();
+                break;
+            case OnlineScreen.Result.SessionCreated:
+                audio.Play(Sfx.UiConfirm);
+                CreateOnline();
+                break;
+        }
+    }
+    else if (inMenu)
     {
         switch (menu.Update((float)frameDt, imgui.WantsMouse))
         {
+            case TitleMenu.Result.Online:
+                audio.Play(Sfx.UiConfirm);
+                onlineScreen.Controls = menu.Controls;
+                onlineScreen.CustomLoadout = menu.PickedLoadout;
+                onlineScreen.Open();
+                break;
             case TitleMenu.Result.Quit:
                 window.ShouldClose = true;
                 break;
@@ -326,7 +397,7 @@ while (!window.ShouldClose)
     if (inMenu)
     {
         // Menu feedback sounds: moving the highlight, changing a value.
-        int focusSig = menu.FocusSignature, valueSig = menu.ValueSignature;
+        int focusSig = menu.FocusSignature, valueSig = onlineScreen.IsOpen ? onlineScreen.Signature : menu.ValueSignature;
         if (valueSig != menuValue) audio.Play(Sfx.UiConfirm);
         else if (focusSig != menuFocus) audio.Play(Sfx.UiMove);
         menuFocus = focusSig;
@@ -343,13 +414,27 @@ while (!window.ShouldClose)
     }
     else if (escPressed)
     {
-        OpenMenu();
+        if (online != null) EndOnline("You left the game.");
+        else OpenMenu();
         accumulator = 0;
     }
     else if (results.IsOpen)
     {
         switch (results.Update((float)frameDt, imgui.WantsMouse))
         {
+            case ResultsScreen.Action.Rematch when online != null:
+                // Online: only the host restarts (everyone gets the new match through the network).
+                if (online.Session.IsHost)
+                {
+                    audio.Play(Sfx.UiConfirm);
+                    online.Session.StartMatch((uint)Environment.TickCount);
+                }
+                break;
+            case ResultsScreen.Action.Menu when online != null:
+                // Host: everyone back to the lobby. Client: leave the game.
+                if (online.Session.IsHost) online.Session.ReturnToLobby();
+                else EndOnline(null);
+                break;
             case ResultsScreen.Action.Rematch:
                 audio.Play(Sfx.UiConfirm);
                 matchCounter++;
@@ -369,6 +454,77 @@ while (!window.ShouldClose)
     }
 
     long simStart = Stopwatch.GetTimestamp();
+    int onlineSteps = 0;
+    if (online != null)
+    {
+        online.Controls = onlineScreen.Controls;
+        online.KeyboardBlocked = imgui.WantsKeyboard || replayView != null;
+        online.MouseBlocked = imgui.WantsMouse || replayView != null;
+        online.HoldInputs = results.IsOpen;
+        if (online.State is { } os)
+        {
+            // Mouse pointer -> arena units for the online match (shake-free view).
+            float scale = window.Width > 0 ? vk.Extent.Width / (float)window.Width : 1f;
+            var stable = GameRenderer.StableView(os, vk.Extent.Width, vk.Extent.Height, scale);
+            var (mx, my) = mouse.WindowPos;
+            mouse.SetArenaTarget(stable.ToArenaX(mx * scale), stable.ToArenaY(my * scale));
+        }
+        onlineSteps = online.Update(frameDt, onOnlineEvents);
+        if (online.MatchStarted && online.State is { } started)
+        {
+            inMenu = false;
+            ExitReplay();
+            results.Close();
+            results.SetOnlineRole(online.Session.IsHost ? 1 : 2);
+            controllers = online.Controllers;
+            ApplyControllerLabels(started);
+            renderer.YouSlot = online.LocalSlot;
+            debug.Online = online.Match;
+            onlineWasInMatch = true;
+            desyncSaved = false;
+            lastReplay = null;
+        }
+        else if (online.LabelsChanged && online.State is { } labelled)
+        {
+            controllers = online.Controllers;
+            ApplyControllerLabels(labelled);
+            renderer.YouSlot = online.LocalSlot;
+        }
+        if (online.MatchOverPending && online.State is { } over)
+        {
+            online.MatchOverPending = false;
+            lastReplay = online.LastReplay;
+            if (lastReplay != null)
+            {
+                try { lastReplay.Save(replayFile); }
+                catch (Exception e) { Console.WriteLine($"Could not save replay: {e.Message}"); }
+            }
+            results.Open(over, online.Stats, controllers, renderer.YouSlot, lastReplay != null);
+        }
+        if (online.Match is { Desynced: true } desynced && !desyncSaved && online.State is { } atDesync)
+        {
+            // Keep what this machine simulated, to compare with the other side's file.
+            desyncSaved = true;
+            var snapshot = online.Recorder.Finish(atDesync);
+            string file = Path.Combine(AppContext.BaseDirectory, "replays", $"desync-{desynced.DesyncTick}-peer{online.Session.LocalPeer}.cfreplay");
+            try { snapshot?.Save(file); Console.WriteLine($"Desync at tick {desynced.DesyncTick}; saved {file}"); }
+            catch (Exception e) { Console.WriteLine($"Could not save desync replay: {e.Message}"); }
+        }
+        var onlinePhase = online.Session.Phase;
+        if (onlinePhase == Crossfire.Net.OnlinePhase.Closed) EndOnline(online.Session.Failure);
+        else if (onlinePhase == Crossfire.Net.OnlinePhase.Lobby && onlineWasInMatch)
+        {
+            // The host took everyone back to the lobby.
+            onlineWasInMatch = false;
+            results.Close();
+            ExitReplay();
+            debug.Online = null;
+            OpenMenu();
+            onlineScreen.Open();
+        }
+    }
+    bool inOnlineMatch = online is { Session.Phase: Crossfire.Net.OnlinePhase.InMatch, State: not null };
+
     int steps = 0;
     float alpha;
     if (replayView != null)
@@ -376,6 +532,11 @@ while (!window.ShouldClose)
         // Replay: re-simulate recorded inputs; the live match is frozen behind it.
         steps = replayView.Update(frameDt, TickSeconds, imgui.WantsMouse, onReplayStep);
         alpha = replayView.Alpha(TickSeconds);
+    }
+    else if (inOnlineMatch)
+    {
+        steps = onlineSteps;
+        alpha = online!.Alpha;
     }
     else
     {
@@ -426,7 +587,7 @@ while (!window.ShouldClose)
     audio.Update((float)frameDt);
     if (results.IsOpen && replayView == null && results.Focus != resultsFocus) { if (resultsFocus >= 0) audio.Play(Sfx.UiMove); resultsFocus = results.Focus; }
     else if (!results.IsOpen) resultsFocus = -1;
-    var shown = replayView?.Player.State ?? state;
+    var shown = replayView?.Player.State ?? (inOnlineMatch ? online!.State! : state);
     renderer.ShowBanners = replayView == null && !results.IsOpen;
     renderer.ShowControlHints = replayView == null;
 
@@ -456,7 +617,7 @@ while (!window.ShouldClose)
         cursorHidden = hideCursor;
         window.SetInputMode(GlfwInputMode.Cursor, hideCursor ? CursorHidden : CursorNormal);
     }
-    debug.Draw(state, sim, ref setup, seed, out bool restart, frameDt, simMs, batch.Count, batch.Dropped, controllers, out bool controllersChanged);
+    debug.Draw(inOnlineMatch ? online!.State! : state, sim, ref setup, seed, out bool restart, frameDt, simMs, batch.Count, batch.Dropped, controllers, out bool controllersChanged);
     if (restart)
     {
         var mode = controllers.Length > 2 && !controllers[0].IsBot ? GameMode.Team
@@ -470,7 +631,7 @@ while (!window.ShouldClose)
     }
     else if (controllersChanged)
     {
-        ApplyControllerLabels();
+        ApplyControllerLabels(state);
     }
 
     bool began = vk.BeginFrame(new float4(0.015f, 0.016f, 0.024f, 1f), out var cmd);
@@ -484,12 +645,17 @@ while (!window.ShouldClose)
         if (mousePlayer && mouse.HasTarget) renderer.DrawPointer(batch, mouse.ArenaX, mouse.ArenaY);
         debug.DrawSpriteStress(batch, shown);
         batch.Flush(cmd, view);
-        if (inMenu) menu.Draw(renderer, window.Width, window.Height);
+        if (inMenu && onlineScreen.IsOpen) onlineScreen.Draw(renderer, window.Width, window.Height);
+        else if (inMenu) menu.Draw(renderer, window.Width, window.Height);
         else
         {
             renderer.DrawHud(shown, view.ScaledBy(1f / uiScale), window.Width, window.Height, alpha);
             if (replayView != null) replayView.Draw(renderer, window.Width, window.Height);
-            else results.Draw(renderer, window.Width, window.Height);
+            else
+            {
+                if (inOnlineMatch) OnlineScreen.DrawMatchOverlay(renderer, online!, window.Width, window.Height);
+                results.Draw(renderer, window.Width, window.Height);
+            }
         }
         imgui.Render(cmd);
         vk.EndFrame();

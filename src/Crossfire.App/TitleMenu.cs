@@ -23,6 +23,8 @@ internal sealed class TitleMenu
         None,
         Start,
         Quit,
+        /// <summary>Open the online screen (host or join).</summary>
+        Online,
     }
 
     private static readonly (GameMode Mode, string Title, string Detail)[] Modes =
@@ -31,6 +33,7 @@ internal sealed class TitleMenu
         (GameMode.VsBot, "VS BOT", "You against one bot. Roles swap each round."),
         (GameMode.Local, "LOCAL 1V1", "Two players: P1 on mouse, a gamepad or WASD + QERF; P2 on a gamepad or Arrows + UIOP."),
         (GameMode.LocalTeam, "LOCAL 2V2", "Up to 4 players on mouse, both keyboard halves and gamepads. Bots fill empty seats."),
+        (GameMode.Online, "ONLINE", "Host a game or join one by IP address. Up to 8 players, bots fill the rest."),
         (GameMode.Demo, "BOT VS BOT", "Sit back and watch two bots play."),
     ];
 
@@ -172,6 +175,10 @@ internal sealed class TitleMenu
         }
     }
 
+    /// <summary>Controls and patterns chosen in the menu (online uses them too).</summary>
+    public ControlScheme Controls => (ControlScheme)_controls;
+    public Loadout PickedLoadout => CurrentLoadout;
+
     public MatchOptions Options => new(
         Modes[_mode].Mode,
         (BotDifficulty)_difficulty,
@@ -298,6 +305,7 @@ internal sealed class TitleMenu
             if (hit >= 0 && hit < count && moved) _focus = hit;
             int pick = confirm ? _focus : lClick && hit >= 0 && hit < count ? hit : -1;
             if (pick == CreditsRow) { _creditsPage = true; _rowCount = 0; }
+            else if (pick >= 0 && Modes[pick].Mode == GameMode.Online) { _mode = pick; return Result.Online; }
             else if (pick >= 0) OpenOptions(pick);
             return Result.None;
         }
@@ -415,7 +423,7 @@ internal sealed class TitleMenu
         ("THIRD-PARTY SOFTWARE", 20, 1),
         ("GLFW  ·  SDL_GameControllerDB  ·  Dear ImGui  ·  ImPlot  ·  SDL3  ·  SDL_mixer", 14, 2),
         ("stb  ·  stb_vorbis  ·  dr_flac  ·  dr_mp3  ·  shaderc  ·  glslang  ·  SPIRV-Tools", 14, 2),
-        ("Khronos Vulkan headers  ·  glad  ·  ResX.NET", 14, 2),
+        ("Khronos Vulkan headers  ·  glad  ·  ResX.NET  ·  RakNet  ·  SLikeNet  ·  .NET  ·  .NET Community Toolkit", 14, 2),
         ("Full licence texts: NOTICE.txt and the LICENSES folder next to the game.", 13, 3),
     ];
 
