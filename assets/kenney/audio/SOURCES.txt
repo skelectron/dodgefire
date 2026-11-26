@@ -24,3 +24,5 @@ ui_confirm.ogg <- ui-audio\audio\click3.ogg
 ui_back.ogg <- interface-sounds\audio\back_002.ogg
 music_menu.ogg <- music-loops\loops\space-cadet.ogg
 music_match.ogg <- music-loops\loops\alpha-dance.ogg
+combo_link.ogg <- digital-audio\audio\twotone2.ogg
+combo_fire.ogg <- sci-fi-sounds\audio\laserlarge_003.ogg

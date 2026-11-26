@@ -80,6 +80,27 @@ public sealed class GameRenderer
 
     private static readonly Color4 YouColor = new(1f, 0.9f, 0.4f);
     private static readonly Color4 OverdriveColor = new(1f, 0.78f, 0.25f);
+    private static readonly Color4 ComboColor = new(1f, 0.55f, 0.95f);
+
+    // "CROSSFIRE!" pop-ups over combo volleys (arena units; fixed pool, no allocation).
+    private struct Popup { public float X, Y, Age; public int Team; public bool Live; }
+    private readonly Popup[] _popups = new Popup[8];
+    private int _popupCursor;
+    private const float PopupLife = 0.9f;
+
+    private void AddPopup(float x, float y, int team)
+    {
+        // Combos close together share one pop-up (refreshed) instead of stacking text.
+        for (int i = 0; i < _popups.Length; i++)
+        {
+            ref var pp = ref _popups[i];
+            if (!pp.Live || pp.Team != team) continue;
+            float dx = pp.X - x, dy = pp.Y - y;
+            if (dx * dx + dy * dy < 160 * 160) { pp.Age = Math.Min(pp.Age, 0.15f); return; }
+        }
+        _popups[_popupCursor] = new Popup { X = x, Y = y, Team = team, Live = true };
+        _popupCursor = (_popupCursor + 1) % _popups.Length;
+    }
 
     /// <summary>Kenney sprites + font. When a region is missing the SDF fallback is drawn instead.</summary>
     public GameArt? Art { get; set; }
@@ -168,6 +189,16 @@ public sealed class GameRenderer
                     Spawn(x, y, 60, 0.4f, OverdriveColor.WithAlpha(0.6f), SpriteShape.Glow);
                     _shake = Math.Max(_shake, 3f);
                     break;
+                case SimEventType.Combo:
+                    // Link made: a pulse at the midpoint (the dotted line itself is drawn with the telegraphs).
+                    Spawn(x, y, 50, 0.35f, ComboColor, SpriteShape.Ring);
+                    break;
+                case SimEventType.ComboFired:
+                    Spawn(x, y, 140, 0.5f, ComboColor, SpriteShape.Ring);
+                    Spawn(x, y, 80, 0.4f, ComboColor.WithAlpha(0.6f), SpriteShape.Glow);
+                    AddPopup(x, y, e.Team);
+                    _shake = Math.Max(_shake, 5f);
+                    break;
                 case SimEventType.MineBurst:
                     Spawn(x, y, 40, 0.3f, TeamColor[e.Team], SpriteShape.Ring);
                     Spawn(x, y, 26, 0.2f, White.WithAlpha(0.7f), SpriteShape.Glow);
@@ -219,6 +250,8 @@ public sealed class GameRenderer
         if (_flash > 0) _flash = Math.Max(0, _flash - dt * 2.5f);
         for (int i = 0; i < _effects.Length; i++)
             if (_effects[i].Life > 0) _effects[i].Age += dt;
+        for (int i = 0; i < _popups.Length; i++)
+            if (_popups[i].Live && (_popups[i].Age += dt) > PopupLife) _popups[i].Live = false;
         _shake = Math.Max(0, _shake - dt * 60f);
         if (_goBannerTicks > 0) _goBannerTicks--;
     }
@@ -318,6 +351,38 @@ public sealed class GameRenderer
                 }
             }
             b.Add(x, y, rad, rad, bc, SpriteShape.Bullet);
+        }
+
+        // 4b. Crossfire combo telegraphs, on top of the bullets so they stay readable in a crowded half:
+        // a faint beam between the two patterns, a dot at every future bullet, and the escape gap ringed in white.
+        for (int i = 0; i < SimState.MaxEmitters; i++)
+        {
+            ref readonly var e = ref s.Emitters[i];
+            if (!e.Active || !e.ComboLeader || !e.Linked || e.Age > tele) continue;
+            ref readonly var partner = ref s.Emitters[e.ComboPartner - 1];
+            if (!partner.Active) continue;
+            float t = Math.Clamp((e.Age + a) / Math.Max(1, tele), 0f, 1f);
+            int count = Combo.Count(in r, partner.Pos, e.Pos);
+            float blink = 0.6f + 0.4f * MathF.Sin(_time * 18f);
+            float ax = F(partner.Pos.X), ay = F(partner.Pos.Y), bx = F(e.Pos.X), by = F(e.Pos.Y);
+            int beam = Math.Max(2, (int)(MathF.Sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)) / 9f));
+            for (int k = 0; k <= beam; k++)
+            {
+                float u = k / (float)beam;
+                b.Circle(Lerp(ax, bx, u), Lerp(ay, by, u), 5, ComboColor.WithAlpha(0.12f + 0.12f * t), SpriteShape.Glow);
+            }
+            for (int k = 0; k < count; k++)
+            {
+                var pt = Combo.Point(partner.Pos, e.Pos, k, count);
+                float px = F(pt.X), py = F(pt.Y);
+                if (Combo.IsGap(in r, count, e.ComboGap, k))
+                    b.Circle(px, py, 8, White.WithAlpha(0.5f * blink), SpriteShape.Ring, 0.14f);
+                else
+                {
+                    b.Circle(px, py, 4.5f + 2.5f * t, new Color4(0, 0, 0, 0.55f), SpriteShape.Disc); // dark rim separates it from bullets
+                    b.Circle(px, py, 3.5f + 2.5f * t, ComboColor.WithAlpha(0.5f + 0.5f * t * blink), SpriteShape.Disc);
+                }
+            }
         }
 
         // 5. Dodgers: Kenney ships facing the midline, thrusters, shield; the hitbox dot always on top.
@@ -625,6 +690,17 @@ public sealed class GameRenderer
             float y = ui.ToPixelY(Lerp(F(p.PrevPos.Y), F(p.Pos.Y), ai));
             if (i == YouSlot) Text(fg, "YOU", x, y - 36 * ui.Scale, 14, YouColor, center: true);
             else Text(fg, PlayerTags[i] != null ? "BOT" : PlayerLabels[i], x, y - 36 * ui.Scale, 13, TeamColor[p.Team].WithAlpha(0.8f), center: true);
+        }
+
+        // Combo pop-ups: rise and fade over the volley.
+        for (int i = 0; i < _popups.Length; i++)
+        {
+            ref readonly var pp = ref _popups[i];
+            if (!pp.Live) continue;
+            float k = pp.Age / PopupLife;
+            float px = ui.ToPixelX(pp.X), py = ui.ToPixelY(pp.Y) - (30 + 40 * k) * ui.Scale;
+            Text(fg, "CROSSFIRE!", px + 2, py + 2, 22, new Color4(0, 0, 0, 0.6f * (1 - k)), center: true);
+            Text(fg, "CROSSFIRE!", px, py, 22, Color4.Lerp(ComboColor, TeamColor[pp.Team], 0.35f).WithAlpha(1 - k * k), center: true);
         }
 
         if (ShowBanners || s.Phase != MatchPhase.MatchOver) DrawBanner(fg, s, ui);

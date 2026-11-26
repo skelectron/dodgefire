@@ -22,7 +22,7 @@ internal sealed class ResultsScreen
         Menu,
     }
 
-    private static readonly string[] Columns = ["LIVES LOST", "LIVES TAKEN", "GRAZES", "FLIPS / BLOCKED", "BREAKS", "PATTERNS", "OVERDRIVES"];
+    private static readonly string[] Columns = ["LIVES LOST", "LIVES TAKEN", "GRAZES", "FLIPS/BLOCKS", "BREAKS", "PATTERNS", "OVERDRIVES", "COMBOS"];
     private static readonly string[] ButtonNames = ["REMATCH", "WATCH REPLAY", "MENU"];
 
     private readonly KeyboardInput _keyboard;
@@ -33,7 +33,7 @@ internal sealed class ResultsScreen
     private int _rows;
     private readonly string[] _names = new string[SimState.MaxPlayers];
     private readonly string[] _roles = new string[SimState.MaxPlayers];
-    private readonly string[,] _cells = new string[SimState.MaxPlayers, 7];
+    private readonly string[,] _cells = new string[SimState.MaxPlayers, Columns.Length];
     private readonly int[] _team = new int[SimState.MaxPlayers];
     private readonly int[] _order = new int[SimState.MaxPlayers];
     private int _mvp = -1;
@@ -95,6 +95,7 @@ internal sealed class ResultsScreen
             _cells[r, 4] = p.Breaks.ToString();
             _cells[r, 5] = p.Placed.ToString();
             _cells[r, 6] = p.Overdrives.ToString();
+            _cells[r, 7] = p.Combos.ToString();
         }
     }
 
@@ -162,7 +163,7 @@ internal sealed class ResultsScreen
         float appear = Math.Clamp(_time / 0.35f, 0f, 1f);
         Fill(dl, 0, 0, w, h, new Color4(0.01f, 0.01f, 0.03f, 0.55f * appear));
 
-        const float colW = 104, nameW = 140, roleW = 80;
+        const float colW = 96, nameW = 140, roleW = 80;
         float tableW = nameW + roleW + Columns.Length * colW;
         float panelW = tableW + 40, rowH = 26;
         float panelH = 150 + 30 + _rows * rowH + 90;

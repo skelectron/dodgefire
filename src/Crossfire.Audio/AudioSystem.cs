@@ -31,6 +31,8 @@ public enum Sfx
     UiMove,
     UiConfirm,
     UiBack,
+    ComboLink,
+    ComboFire,
 }
 
 public enum Music
@@ -56,6 +58,7 @@ public sealed unsafe class AudioSystem : IDisposable
         "place.ogg", "fire_small.ogg", "fire_small2.ogg", "fire_large.ogg", "fire_sweep.ogg", "fire_homing.ogg", "fire_mines.ogg",
         "mine_burst.ogg", "rejected.ogg", "graze.ogg", "flip.ogg", "flip_block.ogg", "break.ogg", "break_field.ogg", "overdrive.ogg",
         "hit.ogg", "death.ogg", "round_start.ogg", "round_end.ogg", "match_end.ogg", "ui_move.ogg", "ui_confirm.ogg", "ui_back.ogg",
+        "combo_link.ogg", "combo_fire.ogg",
     ];
 
     /// <summary>Per-effect base volume (the mix) and minimum seconds between two plays (anti-spam).</summary>
@@ -64,6 +67,7 @@ public sealed unsafe class AudioSystem : IDisposable
         (0.35f, 0.05f), (0.22f, 0.06f), (0.22f, 0.06f), (0.3f, 0.08f), (0.28f, 0.1f), (0.3f, 0.1f), (0.3f, 0.1f),
         (0.3f, 0.05f), (0.35f, 0.15f), (0.12f, 0.06f), (0.45f, 0.05f), (0.6f, 0.05f), (0.85f, 0.2f), (0.5f, 0.2f), (0.6f, 0.2f),
         (0.6f, 0.08f), (0.85f, 0.1f), (0.5f, 0.3f), (0.55f, 0.5f), (0.6f, 0.5f), (0.25f, 0.03f), (0.4f, 0.05f), (0.35f, 0.05f),
+        (0.4f, 0.1f), (0.55f, 0.1f),
     ];
 
     private readonly MixMixer _mixer;
@@ -201,6 +205,8 @@ public sealed unsafe class AudioSystem : IDisposable
                 case SimEventType.FlipBlock: Play(Sfx.FlipBlock, x); break;
                 case SimEventType.Break: Play(Sfx.Break, x); Play(Sfx.BreakField, x); break;
                 case SimEventType.Overdrive: Play(Sfx.Overdrive, x); break;
+                case SimEventType.Combo: Play(Sfx.ComboLink, x); break;
+                case SimEventType.ComboFired: Play(Sfx.ComboFire, x); break;
                 case SimEventType.Hit: Play(Sfx.Hit, x); break;
                 case SimEventType.Death: Play(Sfx.Death, x); break;
                 case SimEventType.RoundStart: Play(Sfx.RoundStart); break;

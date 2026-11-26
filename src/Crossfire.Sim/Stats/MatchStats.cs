@@ -14,6 +14,8 @@ public struct PlayerStats
     public int Placed;
     public int Rejected;
     public int Overdrives;
+    /// <summary>Crossfire combos this Gunner was part of (as placer or partner).</summary>
+    public int Combos;
     /// <summary>Ticks spent alive as a Dodger while a round was being played.</summary>
     public int TicksSurvived;
     /// <summary>Ticks spent as a Dodger / as a Gunner while playing (role mix, for 1v1 role swaps).</summary>
@@ -61,6 +63,10 @@ public sealed class MatchStats
                 case SimEventType.Placed: Players[e.Player].Placed++; break;
                 case SimEventType.Rejected: Players[e.Player].Rejected++; break;
                 case SimEventType.Overdrive: Players[e.Player].Overdrives++; break;
+                case SimEventType.Combo:
+                    Players[e.Player].Combos++;
+                    if (e.Other < Players.Length) Players[e.Other].Combos++;
+                    break;
                 case SimEventType.RoundEnd: Rounds++; break;
                 case SimEventType.MatchEnd: Winner = s.MatchWinner; break;
             }

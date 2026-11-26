@@ -3,7 +3,7 @@
 Competitive team bullet-hell PvP on one split arena, built in C# / .NET 10 on the BRUTAL framework (Vulkan).
 Dodgers survive in their own half; Gunners place telegraphed bullet patterns in the enemy half.
 
-Status: **Phases 0–6 done**. You can play against bots, play with up to 3 friends on one PC (mouse, both halves of the keyboard and gamepads), or watch Bot vs Bot. `tools/publish.ps1` makes a ready-to-upload Windows build. Next is Phase 7: combo patterns and a 30,000-bullet stress pass in 4v4.
+Status: **Phases 0–7 done**. You can play against bots, play with up to 3 friends on one PC (mouse, both halves of the keyboard and gamepads), or watch Bot vs Bot. Teammate Gunners can link **crossfire combos**, and 4v4 holds a locked 60 FPS with 30,000 bullets on an Intel HD 620. `tools/publish.ps1` makes a ready-to-upload Windows build. Phase 8 (online play) is next and needs its own plan.
 
 ## Modes and bots
 
@@ -130,6 +130,18 @@ There are 7 patterns. Each Gunner brings **4** into a match, set under **GUNNER 
 
 Bots pick a loadout from their difficulty: Easy plays the classic four; Normal and Hard use Hunter, Trapper or Classic. Bots also fire Overdrive when it's ready.
 
+### Crossfire combos (2v2 and 4v4)
+
+When a Gunner places a pattern close to a **teammate's pattern that is still telegraphing**, the two link into a **crossfire combo**. "Close" means 120–380 units apart.
+- **Both telegraphs restart together**, so the combo always gets a full 0.45 s warning, and the two patterns fire on the same tick.
+- During the warning, a dotted beam between the two patterns shows **exactly where the combo bullets will appear**. The escape gap (3 bullets wide) is ringed in white.
+- When they fire, the line of bullets appears and splits into **two walls moving apart**, one to each side.
+- Both Gunners get 10 energy back and 10 Overdrive charge. Then each has a **4 s combo cooldown**, so combos stay special moments.
+
+The best combos sit on opposite sides of a Dodger, so the line crosses them. Normal and Hard bots go for exactly that: when a teammate's pattern is telegraphing and the far side of the Dodger is reachable in time, they move there and fire. In bot 4v4 matches that comes to about 17–20 combos a minute across both teams.
+
+Every number is a rule, live-tunable in F1 (radius, spacing, gap, speed, refund, cooldown, on/off). The results screen counts COMBOS per player.
+
 ### Dodger abilities
 
 - **Flip:** a 0.4 s barrel-roll dash at 1.5× speed. The first bullet that touches you during the roll is destroyed instead of costing a life. 2.5 s cooldown, shown by the FLIP pip in the HUD.
@@ -155,6 +167,7 @@ Sound effects and music play through SDL3_mixer (BRUTAL bindings). Sounds follow
 |---|---|---|
 | Static sprites | 50,000 @ 60 FPS | 60 FPS |
 | Bullets in play | 20,000, sim < 4 ms | 60 FPS, sim ≈ 0.3 ms/tick average. With two Hard bots thinking: 0.3–0.7 ms average, occasional spikes up to 7 ms |
+| **4v4, 30,000 bullets** (Phase 7) | locked 60 FPS | 60.0–60.1 FPS in every 5 s window, frame avg 16.65 ms. Sim plus 8 Hard bots average 0.5–0.7 ms/tick, max about 3 ms; 0 B/frame. Uncapped, the same scene renders at about 134 FPS (7.4 ms). Run: `--mode team --stress 30000 --god --perf-log` |
 | GC allocations in a match | 0 per frame | 0 B/frame steady state, 0 gen0 collections |
 | Determinism | same inputs → same hash over 10k ticks | Passes, with a golden hash, in both Debug and Release |
 
@@ -173,6 +186,7 @@ Sound effects and music play through SDL3_mixer (BRUTAL bindings). Sounds follow
 - **SDF shapes plus a small texture atlas.** Bullets, rings, telegraph arcs and the aim reticle are signed-distance shapes, kept round and readable. Ships and effects are Kenney sprites packed into one atlas at startup. The background is a procedural, domain-warped nebula in the fragment shader (`SpriteShape.Nebula`), plus a parallax starfield, a vignette and an animated midline. All of it goes through the same single instanced draw.
 - **Graze → Break bar** delivers Phase 6's "graze → Super" early, as a Dodger-side screen clear. The Dodger also gets a Flip.
 - **Classic render pass instead of dynamic rendering.** The BRUTAL ImGui Vulkan backend requires a `VkRenderPass`.
+- **Bots use a bucket grid, collision doesn't.** Dodger bots gather the 256 *nearest* bullets by walking a 32-unit bucket grid outward in rings. The grid is built at most once per tick and shared by all bots, which keeps eight bots cheap at 30k bullets. Before this, a bot took the first 512 bullets in pool order, which at high density could miss the bullets right next to it.
 - **No uniform grid for collision.** Bullets are already split by half, and each half has at most 4 Dodgers, so a per-bullet axis-reject test is cheaper than rebuilding a grid every tick (benchmarked at 0.37 ms for 20k bullets).
 - **Parallel bullet movement is implemented** (`ParallelBulletMover`, proven equal to serial by a test). It's off by default because it was slower than serial at 20–30k bullets.
 - **1v1 round rule.** With one player per team, a round has a single Dodger, so the Dodger wins by surviving `SurvivalTicks`. Symmetric rounds (2v2+) have no timeout; instead, energy regen ramps up after 60 s.

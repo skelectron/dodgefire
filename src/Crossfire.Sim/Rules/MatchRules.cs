@@ -70,6 +70,24 @@ public struct MatchRules
     public int OverdriveCooldownRate;
     public int OverdriveRegenMultiplier;
 
+    // Crossfire combos (team play): a pattern placed near a teammate's telegraphing pattern links with it.
+    public bool CombosEnabled;
+    /// <summary>Max distance between two teammates' patterns that can link.</summary>
+    public Fix ComboRadius;
+    /// <summary>Min distance (closer patterns would make a degenerate line).</summary>
+    public Fix ComboMinDistance;
+    /// <summary>Spacing of the combo volley's bullets along the line between the two patterns.</summary>
+    public Fix ComboSpacing;
+    /// <summary>Bullets left out of the line (the escape gap), at a random spot shown by the telegraph.</summary>
+    public int ComboGapSlots;
+    /// <summary>Speed of the two walls that split off the line, one to each side.</summary>
+    public Fix ComboBulletSpeed;
+    /// <summary>Energy refunded to both Gunners and Overdrive charge gained by both when a combo links.</summary>
+    public Fix ComboRefund;
+    public Fix ComboOverdrive;
+    /// <summary>After linking, neither Gunner can link again for this long (keeps combos special and readable).</summary>
+    public int ComboCooldownTicks;
+
     // Round flow
     public int RoundsToWin;
     public int CountdownTicks;
@@ -120,6 +138,15 @@ public struct MatchRules
                 OverdriveTicks = 5 * TicksPerSecond,
                 OverdriveCooldownRate = 4,
                 OverdriveRegenMultiplier = 2,
+                CombosEnabled = true,
+                ComboRadius = Fix.FromInt(380),
+                ComboMinDistance = Fix.FromInt(120),
+                ComboSpacing = Fix.FromInt(24),
+                ComboGapSlots = 3,
+                ComboBulletSpeed = Fix.Ratio(5, 2),
+                ComboRefund = Fix.FromInt(10),
+                ComboOverdrive = Fix.FromInt(10),
+                ComboCooldownTicks = 4 * TicksPerSecond,
 
                 RoundsToWin = 2,
                 CountdownTicks = 2 * TicksPerSecond,

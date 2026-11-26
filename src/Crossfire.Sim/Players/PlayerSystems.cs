@@ -122,6 +122,7 @@ public static class GunnerSystem
         }
         bool overdrive = p.OverdriveTicks > 0;
         if (overdrive) p.OverdriveTicks--;
+        if (p.ComboCooldown > 0) p.ComboCooldown--;
 
         Fix regen = r.EnergyRegenPerTick;
         bool symmetric = HasDodgers(s, 0) && HasDodgers(s, 1);
@@ -205,6 +206,38 @@ public static class GunnerSystem
             Angle = s.Rng.NextInt(FixMath.AngleUnitsPerTurn),
         };
         s.PushEvent(SimEventType.Placed, index, p.Team, p.Cursor);
+        TryLink(s, index, emitterIndex);
+    }
+
+    /// <summary>Crossfire combo: link a fresh pattern with a teammate's telegraphing one (see <see cref="Combo"/>).</summary>
+    private static void TryLink(SimState s, int index, int emitterIndex)
+    {
+        ref var e = ref s.Emitters[emitterIndex];
+        int partnerIndex = Combo.FindPartner(s, index, e.Pos);
+        if (partnerIndex < 0) return;
+        ref var partner = ref s.Emitters[partnerIndex];
+        ref readonly var r = ref s.Rules;
+        e.ComboPartner = (byte)(partnerIndex + 1);
+        e.ComboLeader = true;
+        e.ComboGap = (byte)s.Rng.NextInt(256);
+        partner.ComboPartner = (byte)(emitterIndex + 1);
+        // Both telegraphs restart together: the pair fires on the same tick after a full warning.
+        e.Age = 0;
+        partner.Age = 0;
+        Reward(s, index, in r);
+        Reward(s, partner.Owner, in r);
+        s.Players[index].ComboCooldown = r.ComboCooldownTicks;
+        s.Players[partner.Owner].ComboCooldown = r.ComboCooldownTicks;
+        var mid = new FixVec2((e.Pos.X + partner.Pos.X) / 2, (e.Pos.Y + partner.Pos.Y) / 2);
+        s.PushEvent(SimEventType.Combo, index, s.Players[index].Team, mid, partner.Owner);
+    }
+
+    private static void Reward(SimState s, int gunner, in MatchRules r)
+    {
+        if ((uint)gunner >= (uint)s.PlayerCount) return;
+        ref var g = ref s.Players[gunner];
+        g.Energy = Fix.Min(r.EnergyMax, g.Energy + r.ComboRefund);
+        if (g.OverdriveTicks == 0) g.Overdrive = Fix.Min(r.OverdriveMax, g.Overdrive + r.ComboOverdrive);
     }
 
     /// <summary>One of <paramref name="owner"/>'s bullets took a life: charge their Overdrive.</summary>
@@ -240,7 +273,21 @@ public static class EmitterSystem
 
             ref readonly var def = ref s.Rules.Patterns[(int)e.Kind];
             int t = e.Age - telegraph - 1;
-            if (t == 0) s.PushEvent(SimEventType.Fired, e.Owner, 1 - e.Half, e.Pos, (int)e.Kind);
+            if (t == 0)
+            {
+                s.PushEvent(SimEventType.Fired, e.Owner, 1 - e.Half, e.Pos, (int)e.Kind);
+                // Combo volley, once per linked pair (the partner fires on this same tick).
+                if (e.ComboLeader && e.Linked)
+                {
+                    ref readonly var partner = ref s.Emitters[e.ComboPartner - 1];
+                    if (partner.Active && partner.ComboPartner == i + 1)
+                    {
+                        Combo.Fire(s, in e, in partner);
+                        var mid = new FixVec2((e.Pos.X + partner.Pos.X) / 2, (e.Pos.Y + partner.Pos.Y) / 2);
+                        s.PushEvent(SimEventType.ComboFired, e.Owner, 1 - e.Half, mid, partner.Owner);
+                    }
+                }
+            }
             if (t >= def.DurationTicks)
             {
                 e.Active = false;

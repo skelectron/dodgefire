@@ -68,6 +68,7 @@ public static class MatchFlow
                     p.Energy = r.EnergyStart;
                 p.Overdrive = Fix.Zero;
                 p.OverdriveTicks = 0;
+                p.ComboCooldown = 0;
                     // Start near the midline (well away from the enemy Dodgers spawning mid-half).
                     Fix inset = Fix.FromInt(70);
                     Fix cx = team == 0 ? enemyMin + inset : enemyMax - inset;

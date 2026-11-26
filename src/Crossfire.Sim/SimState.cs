@@ -38,6 +38,10 @@ public enum SimEventType : byte
     MineBurst,
     /// <summary>A Gunner activated Overdrive.</summary>
     Overdrive,
+    /// <summary>Two teammates' patterns linked into a crossfire combo (Player = placer, Other = partner, Pos = midpoint).</summary>
+    Combo,
+    /// <summary>A linked pair fired its combo volley (Player = leader, Other = partner, Pos = midpoint).</summary>
+    ComboFired,
 }
 
 /// <summary>Things that happened this tick, for render/audio feedback only (not hashed).</summary>
@@ -189,6 +193,7 @@ public sealed class SimState : IDisposable
             for (int k = 0; k < MatchRules.PatternSlots; k++) h.Add((int)p.Loadout[k]);
             h.Add(p.Overdrive.Raw);
             h.Add(p.OverdriveTicks);
+            h.Add(p.ComboCooldown);
             h.Add(p.LastRejectTick);
         }
         for (int i = 0; i < MaxEmitters; i++)
@@ -202,6 +207,7 @@ public sealed class SimState : IDisposable
             h.Add(e.Pos);
             h.Add(e.Age);
             h.Add(e.Angle);
+            h.Add(e.ComboPartner | (e.ComboLeader ? 0x100 : 0) | (e.ComboGap << 16));
         }
         BulletPool b = Bullets;
         h.Add(b.Count);
@@ -231,6 +237,8 @@ public sealed class SimState : IDisposable
         h.Add(r.BreakMax.Raw); h.Add(r.BreakPerGraze.Raw); h.Add(r.BreakHitPenalty.Raw); h.Add(r.BreakInvulnTicks);
         h.Add(r.CursorSpeed.Raw); h.Add(r.EnergyMax.Raw); h.Add(r.EnergyStart.Raw); h.Add(r.EnergyRegenPerTick.Raw);
         h.Add(r.AntiSpawnRadius.Raw); h.Add(r.TelegraphTicks);
+        h.Add(r.CombosEnabled ? 1 : 0); h.Add(r.ComboRadius.Raw); h.Add(r.ComboMinDistance.Raw); h.Add(r.ComboSpacing.Raw);
+        h.Add(r.ComboGapSlots); h.Add(r.ComboBulletSpeed.Raw); h.Add(r.ComboRefund.Raw); h.Add(r.ComboOverdrive.Raw); h.Add(r.ComboCooldownTicks);
         for (int k = 0; k < MatchRules.PatternKinds; k++)
         {
             PatternDef d = r.Patterns[k];

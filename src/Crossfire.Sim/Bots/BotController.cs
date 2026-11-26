@@ -27,14 +27,16 @@ public readonly record struct BotTuning(
     int LapsePercent,
     int LapseTicks,
     bool UseFlip,
-    int BreakCrowd)
+    int BreakCrowd,
+    /// <summary>Join teammates' telegraphing patterns to make crossfire combos.</summary>
+    bool TeamCombos = false)
 {
     public static BotTuning For(BotDifficulty d) => d switch
     {
         BotDifficulty.Easy => new(HorizonTicks: 6, ThinkEvery: 10, NoiseScore: 40_000, UseFocus: false, GunnerThinkEvery: 6, MinEnergy: 80, AllPatterns: false, Combos: false,
             ScanRadius: 80, Padding: 0, LapsePercent: 22, LapseTicks: 24, UseFlip: false, BreakCrowd: 10),
-        BotDifficulty.Normal => new(12, 4, 6_000, true, 3, 0, true, false, ScanRadius: 140, Padding: 2, LapsePercent: 8, LapseTicks: 14, UseFlip: true, BreakCrowd: 6),
-        _ => new(24, 1, 0, true, 1, 0, true, true, ScanRadius: 240, Padding: 6, LapsePercent: 0, LapseTicks: 0, UseFlip: true, BreakCrowd: 4),
+        BotDifficulty.Normal => new(12, 4, 6_000, true, 3, 0, true, false, ScanRadius: 140, Padding: 2, LapsePercent: 8, LapseTicks: 14, UseFlip: true, BreakCrowd: 6, TeamCombos: true),
+        _ => new(24, 1, 0, true, 1, 0, true, true, ScanRadius: 240, Padding: 6, LapsePercent: 0, LapseTicks: 0, UseFlip: true, BreakCrowd: 4, TeamCombos: true),
     };
 }
 
@@ -121,7 +123,7 @@ public static class BotController
 internal static class DodgerBot
 {
 
-    private const int MaxBullets = 512;
+    private const int MaxBullets = 256; // the nearest ones (ring-ordered grid walk), enough for a 24-tick horizon
     private const int Diag = 46341; // 1/sqrt(2) in Q16.16
     private const int FlipMargin = 4; // arena units of clearance below which the bot flips
 
@@ -152,6 +154,8 @@ internal static class DodgerBot
         int hit = (r.HitboxRadius.Raw >> 16) + 1;
 
         // Gather nearby bullets of our half (positions/velocities in 1/256 arena units for sub-unit velocity precision).
+        // A per-tick bucket grid is walked in rings outward from the bot, so the cap keeps the NEAREST bullets and the
+        // cost follows local density instead of the whole pool (30k bullets in 4v4).
         BulletPool pool = s.Bullets;
         int* bx = stackalloc int[MaxBullets];
         int* by = stackalloc int[MaxBullets];
@@ -159,19 +163,37 @@ internal static class DodgerBot
         int* bvy = stackalloc int[MaxBullets];
         int* brad = stackalloc int[MaxBullets];
         int n = 0, crowded = 0;
-        for (int i = 0; i < pool.Count && n < MaxBullets; i++)
+        var grid = BulletGrid.For(s);
+        int gcx = grid.CellX(px), gcy = grid.CellY(py);
+        int rings = scan / BulletGrid.CellSize + 1;
+        for (int ring = 0; ring <= rings && n < MaxBullets; ring++)
         {
-            if (pool.Half[i] != p.Team) continue;
-            int x = pool.PosX[i] >> 16, y = pool.PosY[i] >> 16;
-            int dx = x - px, dy = y - py;
-            if (dx > scan || dx < -scan || dy > scan || dy < -scan) continue;
-            bx[n] = pool.PosX[i] >> 8;
-            by[n] = pool.PosY[i] >> 8;
-            bvx[n] = pool.VelX[i] >> 8;
-            bvy[n] = pool.VelY[i] >> 8;
-            brad[n] = PatternLibrary.BulletRadius((BulletType)pool.Type[i]).Raw >> 16;
-            if (dx * dx + dy * dy < 80 * 80) crowded++;
-            n++;
+            for (int cy0 = gcy - ring; cy0 <= gcy + ring && n < MaxBullets; cy0++)
+            {
+                if ((uint)cy0 >= (uint)grid.Rows) continue;
+                bool edgeRow = cy0 == gcy - ring || cy0 == gcy + ring;
+                int step = edgeRow || ring == 0 ? 1 : 2 * ring; // interior rows: only the two ring columns
+                for (int cx0 = gcx - ring; cx0 <= gcx + ring && n < MaxBullets; cx0 += step)
+                {
+                    if ((uint)cx0 >= (uint)grid.Cols) continue;
+                    int cell = cy0 * grid.Cols + cx0;
+                    for (int j = grid.Start[cell], end = grid.Start[cell + 1]; j < end && n < MaxBullets; j++)
+                    {
+                        int i = grid.Items[j];
+                        if (pool.Half[i] != p.Team) continue;
+                        int x = pool.PosX[i] >> 16, y = pool.PosY[i] >> 16;
+                        int dx = x - px, dy = y - py;
+                        if (dx > scan || dx < -scan || dy > scan || dy < -scan) continue;
+                        bx[n] = pool.PosX[i] >> 8;
+                        by[n] = pool.PosY[i] >> 8;
+                        bvx[n] = pool.VelX[i] >> 8;
+                        bvy[n] = pool.VelY[i] >> 8;
+                        brad[n] = PatternLibrary.BulletRadius((BulletType)pool.Type[i]).Raw >> 16;
+                        if (dx * dx + dy * dy < 80 * 80) crowded++;
+                        n++;
+                    }
+                }
+            }
         }
 
         bool flipping = p.FlipTicks > 0; // the dash ignores focus and moves faster: plan with the real speed
@@ -286,6 +308,11 @@ internal static class GunnerBot
 
         if (!brain.HasTarget) PickTarget(s, ref brain, dodger, minX, maxX, h);
         var goal = ClampToHalf(dodger + brain.TargetOffset, minX, maxX, h, Fix.FromInt(24));
+        // Crossfire combo: a teammate's pattern is telegraphing. Go to the far side of the Dodger if there is
+        // time (the combo line then crosses them); if the cursor is already in combo range, fire right away.
+        bool comboNow = false;
+        if (t.TeamCombos && s.Phase == MatchPhase.Playing && p.ComboCooldown == 0 && TryComboGoal(s, slot, dodger, minX, maxX, h, out var comboGoal, out comboNow))
+            goal = comboGoal;
         // If the Dodger dragged the goal into the anti-spawn zone (clamped against a wall), pick another side.
         long zone = (long)(r.AntiSpawnRadius.Raw + Fix.FromInt(12).Raw);
         if ((goal - dodger).LengthSqRaw() < zone * zone) PickTarget(s, ref brain, dodger, minX, maxX, h);
@@ -306,7 +333,7 @@ internal static class GunnerBot
                 slotToFire = brain.ComboSlot;
                 brain.ComboSlot = -1;
             }
-            else if (arrived)
+            else if (arrived || comboNow)
             {
                 slotToFire = ChoosePattern(s, slot, ref brain, t, dodger, minX, maxX, h);
             }
@@ -373,6 +400,47 @@ internal static class GunnerBot
         foreach (int k in prefs[..count])
             if (k >= 0 && GunnerSystem.CanPlace(s, slot, k) == GunnerSystem.PlaceResult.Ok) return k;
         return -1;
+    }
+
+    /// <summary>
+    /// Combo opportunity: a teammate's fresh, unlinked telegraph targets the same Dodger. <paramref name="goal"/> is the
+    /// point across the Dodger from it when reachable before the telegraph ends; <paramref name="fireNow"/> is true when the
+    /// cursor is already a valid combo partner position (in range, out of the anti-spawn zone).
+    /// </summary>
+    private static bool TryComboGoal(SimState s, int slot, FixVec2 dodger, Fix minX, Fix maxX, Fix h, out FixVec2 goal, out bool fireNow)
+    {
+        ref readonly var p = ref s.Players[slot];
+        ref readonly var r = ref s.Rules;
+        goal = default;
+        fireNow = false;
+        int partner = Combo.FindPartner(s, slot, p.Cursor);
+        if (partner >= 0 && !GunnerSystem.IsTooCloseToDodger(s, p.Team, p.Cursor))
+        {
+            fireNow = true;
+            goal = p.Cursor;
+            return true;
+        }
+
+        // Look for a partner pattern we could reach on the far side of the Dodger.
+        Fix dist = r.AntiSpawnRadius + Fix.FromInt(36);
+        long maxR = r.ComboRadius.Raw, minR = r.ComboMinDistance.Raw;
+        for (int i = 0; i < SimState.MaxEmitters; i++)
+        {
+            ref readonly var e = ref s.Emitters[i];
+            if (!e.Active || e.Linked || e.Age > r.TelegraphTicks - 4) continue;
+            if (e.Owner == slot || e.Owner >= s.PlayerCount || s.Players[e.Owner].Team != p.Team || s.Players[e.Owner].ComboCooldown > 0) continue;
+            var across = dodger - e.Pos;
+            if (across.LengthSqRaw() == 0) continue;
+            var q = ClampToHalf(dodger + across.WithLength(dist), minX, maxX, h, Fix.FromInt(24));
+            long d2 = (q - e.Pos).LengthSqRaw();
+            if (d2 > maxR * maxR || d2 < minR * minR) continue;
+            int ticksLeft = r.TelegraphTicks - e.Age - 2;
+            long reach = (long)r.CursorSpeed.Raw * ticksLeft;
+            if ((q - p.Cursor).LengthSqRaw() > reach * reach) continue;
+            goal = q;
+            return true;
+        }
+        return false;
     }
 
     private static void PickTarget(SimState s, ref BotBrain brain, FixVec2 dodger, Fix minX, Fix maxX, Fix h)

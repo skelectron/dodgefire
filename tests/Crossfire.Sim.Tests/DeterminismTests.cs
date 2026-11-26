@@ -38,7 +38,7 @@ public class DeterminismTests
     [Fact]
     public void Golden_hash_is_stable()
     {
-        const ulong Golden = 0x90987D0B18832AEB;
+        const ulong Golden = 0x706D79BF28D74410; // Phase 7: combo rules, emitter links and combo cooldown in the hash
         ulong actual = RunMatch(TwoVsTwo, 1234, 5678);
         Assert.True(Golden == actual, $"Golden hash mismatch: expected 0x{Golden:X16}, actual 0x{actual:X16}");
     }

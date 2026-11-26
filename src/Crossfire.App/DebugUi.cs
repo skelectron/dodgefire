@@ -192,6 +192,13 @@ internal sealed class DebugUi(string deviceName, bool validation)
             ImGui.SliderInt("telegraph (ticks)", ref r.TelegraphTicks, 0, 90, "%d", ImGuiSliderFlags.None);
             TickSlider("survival time (s)", ref r.SurvivalTicks, 5, 120);
             ImGui.SliderInt("rounds to win", ref r.RoundsToWin, 1, 5, "%d", ImGuiSliderFlags.None);
+            ImGui.Checkbox("crossfire combos", ref r.CombosEnabled);
+            FixSlider("combo radius", ref r.ComboRadius, 100, 640);
+            FixSlider("combo spacing", ref r.ComboSpacing, 12, 60);
+            ImGui.SliderInt("combo gap (bullets)", ref r.ComboGapSlots, 1, 8, "%d", ImGuiSliderFlags.None);
+            FixSlider("combo bullet speed", ref r.ComboBulletSpeed, 0.5f, 8);
+            FixSlider("combo refund", ref r.ComboRefund, 0, 50);
+            TickSlider("combo cooldown (s)", ref r.ComboCooldownTicks, 0, 15);
             ImGui.Checkbox("swap roles each round", ref r.SwapRolesEachRound);
 
             for (int k = 0; k < MatchRules.PatternKinds; k++)

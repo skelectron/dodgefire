@@ -13,4 +13,12 @@ public struct Emitter
     /// <summary>Ticks since placement; the telegraph runs for the first TelegraphTicks.</summary>
     public int Age;
     public int Angle;
+    /// <summary>Crossfire combo partner: emitter index + 1 (0 = not linked). Each emitter links at most once.</summary>
+    public byte ComboPartner;
+    /// <summary>The second pattern of a combo fires the combo volley (exactly one per pair).</summary>
+    public bool ComboLeader;
+    /// <summary>Where the escape gap sits along the combo line (0..255 of the free range), picked when linking.</summary>
+    public byte ComboGap;
+
+    public readonly bool Linked => ComboPartner != 0;
 }

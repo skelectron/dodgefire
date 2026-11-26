@@ -56,6 +56,8 @@ public struct Player
     public Fix Overdrive;
     /// <summary>Ticks of Overdrive left (0 = inactive).</summary>
     public int OverdriveTicks;
+    /// <summary>Ticks until this Gunner can link another crossfire combo.</summary>
+    public int ComboCooldown;
     /// <summary>Tick of the last rejected placement (UI feedback), -1 if none.</summary>
     public int LastRejectTick;
 

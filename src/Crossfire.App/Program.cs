@@ -215,12 +215,22 @@ void ExitReplay()
     replayView = null;
 }
 
+Replay? cliReplay = null;
 if (replayPath != null)
+{
+    try { cliReplay = Replay.Load(replayPath); }
+    catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException or EndOfStreamException)
+    {
+        // E.g. a replay saved by an older build (the rules layout changed): say so and go to the menu.
+        Console.WriteLine($"Cannot play replay '{replayPath}': {e.Message}");
+    }
+}
+
+if (cliReplay is { } loaded)
 {
     // Watch a saved replay straight away; leaving it goes to the menu.
     inMenu = false;
     StartMatch(new MatchOptions(GameMode.Demo, BotDifficulty.Normal, Crossfire.Sim.Players.PlayerRole.Dodger, ControlScheme.Mouse));
-    var loaded = Replay.Load(replayPath);
     controllers = new SlotController[loaded.Players];
     for (int i = 0; i < controllers.Length; i++) controllers[i] = new SlotController(ControllerKind.Bot);
     renderer.ControlHints = [];

@@ -6,7 +6,7 @@ namespace Crossfire.App;
 internal sealed class PerfLog
 {
     private readonly Stopwatch _window = Stopwatch.StartNew();
-    private int _frames, _simFrames;
+    private int _frames, _simFrames, _hitches;
     private double _frameSum, _frameMax, _simSum, _simMax;
     private long _allocSum, _allocMax;
     private int _gen0 = GC.CollectionCount(0);
@@ -17,6 +17,7 @@ internal sealed class PerfLog
         _frames++;
         _frameSum += frameDt * 1000;
         _frameMax = Math.Max(_frameMax, frameDt * 1000);
+        if (frameDt > 0.020) _hitches++; // a frame over 20 ms misses a 60 Hz vsync
         if (simMs >= 0)
         {
             _simFrames++;
@@ -30,10 +31,10 @@ internal sealed class PerfLog
         int gen0 = GC.CollectionCount(0) - _gen0;
         // The first report includes JIT/startup work; later ones show steady state.
         Console.WriteLine(
-            $"[perf #{_report++}] fps {_frames / _window.Elapsed.TotalSeconds:0.0} | frame avg {_frameSum / _frames:0.00} max {_frameMax:0.00} ms | " +
+            $"[perf #{_report++}] fps {_frames / _window.Elapsed.TotalSeconds:0.0} | frame avg {_frameSum / _frames:0.00} max {_frameMax:0.00} ms, {_hitches} over 20 ms | " +
             $"sim avg {(_simFrames > 0 ? _simSum / _simFrames : 0):0.000} max {_simMax:0.000} ms/tick | bullets {bullets} sprites {sprites} | " +
             $"alloc avg {_allocSum / Math.Max(1, _frames)} B/frame max {_allocMax} B | gen0 +{gen0} | debug ui {(debugVisible ? "on" : "off")}");
-        _frames = _simFrames = 0;
+        _frames = _simFrames = _hitches = 0;
         _frameSum = _frameMax = _simSum = _simMax = 0;
         _allocSum = _allocMax = 0;
         _gen0 = GC.CollectionCount(0);
